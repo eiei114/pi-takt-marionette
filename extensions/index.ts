@@ -270,7 +270,6 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   private statusRefreshErrorCount = 0;
   private liveWidgetVisible = false;
   private inputMode: TaktInputMode = "pi";
-  private terminalInputUnsubscribe: (() => void) | undefined;
   /** Active fullscreen focus view; owns human input while takt mode runs. */
   private focusView: TaktFullscreenFocusView | undefined;
   private focusGeneration = 0;
@@ -745,7 +744,6 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       mode = "pi";
     }
 
-    this.clearTerminalInputCapture();
     this.inputMode = mode;
 
     if (mode === "takt") {
@@ -1648,7 +1646,6 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       this.refreshTimer = undefined;
     }
     this.closeTaktFocusView("external-close");
-    this.clearTerminalInputCapture();
     this.inputMode = "pi";
     this.clearStatusRefreshError();
     this.context?.ui.setStatus(STATUS_KEY, undefined);
@@ -2164,11 +2161,6 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       return;
     }
     // external-close: the caller already manages mode state and notifications.
-  }
-
-  private clearTerminalInputCapture(): void {
-    this.terminalInputUnsubscribe?.();
-    this.terminalInputUnsubscribe = undefined;
   }
 
   private syncInputModeStatus(): void {
