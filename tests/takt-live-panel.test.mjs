@@ -47,6 +47,64 @@ test("live widget renders the PTY screen instead of raw cursor escapes", async (
   terminal.dispose();
 });
 
+test("normal buffer with scrollback renders the current bottom viewport, not row zero", async () => {
+  const terminal = new Terminal({ cols: 12, rows: 3, scrollback: 100, allowProposedApi: true });
+  await new Promise((resolve) => {
+    terminal.write("line-01\r\nline-02\r\nline-03\r\nline-04", resolve);
+  });
+
+  // Buffer holds four lines but only three visible rows: the viewport must
+  // show the bottom page (lines 02-04), never stale top-of-scrollback line-01.
+  const lines = renderTaktTerminal(terminal);
+  assert.ok(lines.some((line) => line.includes("line-02")), String(lines));
+  assert.ok(lines.some((line) => line.includes("line-03")));
+  assert.ok(lines.some((line) => line.includes("line-04")));
+  assert.ok(lines.every((line) => !line.includes("line-01")), String(lines));
+  assert.equal(lines.length, 3);
+  terminal.dispose();
+});
+
+test("cursor marker stays on the correct rendered row after normal-buffer scrollback", async () => {
+  const { CURSOR_MARKER } = await import("@earendil-works/pi-tui");
+  const terminal = new Terminal({ cols: 12, rows: 3, scrollback: 100, allowProposedApi: true });
+  await new Promise((resolve) => {
+    terminal.write("row-one\r\nrow-two\r\nrow-three\r\nlast", resolve);
+  });
+
+  const lines = renderTaktTerminal(terminal, { showCursor: true });
+  // Cursor sits after "last" on the absolute buffer row rendered as index 2.
+  const cursorLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
+  assert.ok(cursorLine >= 0, "cursor marker missing");
+  assert.equal(cursorLine, 2);
+  assert.match(lines[cursorLine].replace(CURSOR_MARKER, ""), /last/);
+  terminal.dispose();
+});
+
+test("alternate-screen output keeps rendering from its own screen origin", async () => {
+  const terminal = new Terminal({ cols: 12, rows: 3, scrollback: 100, allowProposedApi: true });
+  await new Promise((resolve) => {
+    terminal.write("scroll-a\r\nscroll-b\r\nscroll-c\r\nscroll-d", resolve);
+  });
+  await new Promise((resolve) => {
+    terminal.write("\u001b[?1049h\u001b[HALT-TOP\r\nALT-MID\r\nALT-BOT", resolve);
+  });
+
+  const lines = renderTaktTerminal(terminal);
+  assert.match(lines[0] ?? "", /ALT-TOP/);
+  assert.match(lines[1] ?? "", /ALT-MID/);
+  assert.match(lines[2] ?? "", /ALT-BOT/);
+  assert.ok(lines.every((line) => !line.includes("scroll-")), String(lines));
+
+  // Full-screen TUI redraw at home position still lands on row zero.
+  await new Promise((resolve) => terminal.write("\u001b[HREDRAWN", resolve));
+  const redrawn = renderTaktTerminal(terminal);
+  assert.match(redrawn[0] ?? "", /^REDRAWN|REDRAWN/);
+
+  await new Promise((resolve) => terminal.write("\u001b[?1049l", resolve));
+  assert.ok(renderTaktTerminal(terminal).some((line) => line.includes("scroll-d")));
+  terminal.dispose();
+});
+
 test("live widget keeps Pi focus and shows the current TAKT screen", async () => {
   const terminal = new Terminal({ cols: 24, rows: 20, allowProposedApi: true });
   await new Promise((resolve) => terminal.write("first\r\nsecond", resolve));

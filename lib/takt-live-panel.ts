@@ -267,6 +267,22 @@ export function renderTaktProjectStack(
   return fitTaktWidgetLines(lines, columns);
 }
 
+/**
+ * Buffer row that the visible viewport starts at. Normal buffers use the
+ * current viewport (xterm keeps it pinned to the bottom page while output
+ * streams), alternate buffers always start at their own row zero.
+ */
+export function taktViewportOrigin(
+  buffer: { readonly type: string; readonly viewportY: number; readonly length: number },
+  rows: number,
+): number {
+  if (buffer.type === "alternate") {
+    return 0;
+  }
+  const maxOrigin = Math.max(0, buffer.length - Math.max(1, rows));
+  return Math.min(Math.max(0, buffer.viewportY), maxOrigin);
+}
+
 /** Localized header: session count plus plain-word running/done detail. */
 function headerLine(projects: readonly TaktProjectWidgetEntry[]): string {
   const count = projects.length;
@@ -441,11 +457,16 @@ function projectActivityScore(project: TaktProjectWidgetEntry): number {
 export function renderTaktTerminal(terminal: Terminal, options: { showCursor?: boolean } = {}): string[] {
   const buffer = terminal.buffer.active;
   const lines: string[] = [];
-  const cursorRow = options.showCursor ? buffer.cursorY : -1;
+  // Normal buffers keep scrollback above the live viewport: rendering absolute
+  // row zero would draw stale top-of-scrollback lines instead of the latest
+  // reply. Start at the current viewport origin instead. Alternate screens
+  // have no scrollback and keep their absolute screen origin.
+  const origin = taktViewportOrigin(buffer, terminal.rows);
+  const cursorRow = options.showCursor ? buffer.baseY + buffer.cursorY - origin : -1;
   const cursorColumn = options.showCursor ? buffer.cursorX : -1;
 
   for (let row = 0; row < terminal.rows; row += 1) {
-    const line = buffer.getLine(row);
+    const line = buffer.getLine(origin + row);
     const rendered = renderLine(
       line as unknown as TerminalLine | undefined,
       terminal.cols,
