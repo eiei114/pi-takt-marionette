@@ -75,6 +75,7 @@ pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
 | `/takt:exec [path]` | Start a fresh interactive `takt exec` PTY in a selected folder |
 | `/takt:send [path]` | Paste multiline input into a bridge-owned interactive TAKT session |
 | `/takt:mode [pi\|takt\|pi-auto]` | Cycle or set dual-input mode (`Ctrl+Alt+T`) |
+| `/takt:session previous\|next` | Switch fullscreen focus to the previous/next running session (same ordering as `Ctrl+Alt+↑/↓`) |
 | `/takt:stop [path]` | Confirm and interrupt a TAKT process started by Pi |
 | `/takt:status` | Open the optional diagnostic state overlay |
 
@@ -119,8 +120,22 @@ After a session is live, dual input modes let you keep talking to TAKT without
 leaving Pi:
 
 - `pi` (default): editor stays on Pi; use `/takt:send` or tools
-- `takt`: keys go to the active bridge-owned PTY; `Ctrl+Alt+T` still cycles modes (intercepted before TAKT sees it), or use `/takt:mode`
-- Input typed while a workflow is executing is queued (`⏳q3` on the row) and flushed automatically when the session is ready, or via `/takt:flush`
+- `takt`: fullscreen focus — Pi pins a bridge-owned running session and shows
+  its raw PTY in a full-terminal view while your keys go only to that session.
+  With one running session it pins automatically; with several, pick one first
+  (current cwd is highlighted but Enter still confirms). `Esc` returns to Pi,
+  `Ctrl+C` reaches TAKT unchanged, and `Ctrl+Alt+T` still cycles modes
+  (intercepted before TAKT sees it).
+- Input typed programmatically while a workflow is executing is queued
+  (`⏳q3` on the row) and flushed automatically when the session is ready, or
+  via `/takt:flush`; queued lines stay owned by their original project when
+  you switch focus
+- `Ctrl+Alt+↑` / `Ctrl+Alt+↓` move to the previous/next running session with
+  wraparound; each switch updates the raw display and input destination
+  atomically and prints a concise `old → new` note. If your terminal eats
+  those shortcuts, `/takt:session previous|next` does the same thing.
+- When the pinned session finishes or stops, focus closes and Pi returns to
+  `pi` mode — input is never re-targeted to another session automatically.
 - `pi-auto`: entered automatically after a successful `takt_exec_prompt`; Pi can
   inspect with `takt_read_screen` and send follow-ups with `takt_send_input`
   (destructive input still confirms)
@@ -144,7 +159,9 @@ snippet). Rows show discrete facts only — step position and parallel worker
 completion (w2/3) — instead of a synthetic progress bar. Raw PTY output is never shown by
 default: peek it explicitly with `/takt:live [path]` or `/takt:sessions`, or
 inspect external runs (other terminals or other Pi sessions) via
-`/takt:status [path]` or `takt_read_screen`. This only cleans the Pi display;
+`/takt:status [path]` or `takt_read_screen`. Inside `takt` mode the pinned
+session's raw screen is the display itself, always showing the latest viewport
+after scrollback. This only cleans the Pi display;
 it never deletes TAKT tasks or run history automatically. The bridge only stops
 PTYs it created, and bounded stop failures are reported instead of retried
 indefinitely.

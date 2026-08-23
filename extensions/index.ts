@@ -685,6 +685,30 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     context.ui.notify(`Input sent to TAKT ${project.label}.`, "info");
   }
 
+  /** Switch the pinned fullscreen-focus target via the command fallback.
+  * Uses the exact same deterministic ordering and transition behavior as the
+  * Ctrl+Alt+Up/Down shortcuts. */
+  async switchTaktFocusSession(args = ""): Promise<void> {
+    const direction = args.trim().toLowerCase();
+    const delta = direction === "previous" || direction === "prev"
+      ? -1
+      : direction === "next"
+      ? 1
+      : 0;
+    if (delta === 0) {
+      this.context?.ui.notify("Usage: /takt:session previous|next", "warning");
+      return;
+    }
+    if (this.inputMode !== "takt" || this.focusView === undefined) {
+      this.context?.ui.notify(
+        "TAKT session navigation requires fullscreen focus (takt mode).",
+        "warning",
+      );
+      return;
+    }
+    this.focusView.switchTarget(delta);
+  }
+
   async cycleOrSetInputMode(args = ""): Promise<TaktInputMode> {
     const parsed = parseTaktInputMode(args);
     if (!parsed) {
@@ -2069,6 +2093,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     const generation = ++this.focusGeneration;
     const currentProjectId = projectPathKey(context.cwd);
     this.focusViewOpenPromise = context.ui.custom<void>((tui, _theme, _keybindings, done) => {
+      let viewRef: TaktFullscreenFocusView | undefined;
       const view = new TaktFullscreenFocusView({
         sessions: eligible,
         initialSessionId: currentProjectId,
@@ -2079,14 +2104,16 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
             void this.cycleInputMode();
           },
           onExit: (result) => {
-            if (generation !== this.focusGeneration) {
-              return; // stale view from a replaced session/mode change
-            }
+            // The host overlay must always close, even when a newer
+            // generation superseded this view (mode switch / shutdown).
             done();
-            this.handleTaktFocusExit(result);
+            if (generation === this.focusGeneration && viewRef === this.focusView) {
+              this.handleTaktFocusExit(result);
+            }
           },
         },
       });
+      viewRef = view;
       this.focusView = view;
       return {
         render: (width: number) =>
@@ -3393,6 +3420,13 @@ pi.registerCommand("takt:flush", {
     description: "Cycle or set TAKT input mode: pi, takt, or pi-auto",
     handler: async (args, _context) => {
       await runtime?.cycleOrSetInputMode(args);
+    },
+  });
+
+  pi.registerCommand("takt:session", {
+    description: "Switch TAKT fullscreen focus to the previous/next running session",
+    handler: async (args, _context) => {
+      await runtime?.switchTaktFocusSession(args);
     },
   });
 

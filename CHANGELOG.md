@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Render raw TAKT screens from the current viewport origin: normal-buffer
+  scrollback no longer hides the latest reply behind stale top-of-scrollback
+  lines in the live widget, `/takt:live`, and `takt_read_screen`.
+- Make `takt` mode a real fullscreen focused terminal: entering it pins one
+  bridge-owned running session automatically (or asks which one to pin when
+  several run) and shows its raw PTY full-screen while exclusively owning
+  human input — `Esc` returns to Pi, `Ctrl+C` forwards unchanged,
+  `Ctrl+Alt+T` keeps cycling modes, and dimension changes resize the pinned
+  PTY. The pinned view closes idempotently on runner exit, stop, reload, or
+  shutdown and never re-targets input to another session.
+- Add multi-session navigation inside focus: `Ctrl+Alt+↑/↓` move to the
+  previous/next running session with wraparound, each switch updates display
+  and input destination atomically with an `old → new` notification, and
+  `/takt:session previous|next` provides the same transition as a command
+  fallback for terminals that swallow modifier-arrow shortcuts.
+
 ## 0.3.1 - 2026-08-22
 
 - Add the pi-takt-marionette mascot icon to the README and package assets:
