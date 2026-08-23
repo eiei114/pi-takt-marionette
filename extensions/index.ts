@@ -80,7 +80,12 @@ import {
   type StepModelSelection,
 } from "../lib/takt-runtime-yaml.ts";
 import { formatPiModelRef, listPiModels } from "../lib/takt-pi-models.ts";
-import { isCtrlAltTSequence } from "../lib/takt-input-mode.ts";
+import {
+  orderTaktFocusSessions,
+  TaktFullscreenFocusView,
+  type TaktFocusExitResult,
+  type TaktFocusSession,
+} from "../lib/takt-focus-view.ts";
 import { SearchableListController } from "../lib/takt-search-select.ts";
 import { createTaktInputQueue, type TaktInputQueue } from "../lib/takt-input-queue.ts";
 import { setTaktLang, taktLang, toggleTaktLang, type TaktLang } from "../lib/takt-i18n.ts";
@@ -266,6 +271,10 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   private liveWidgetVisible = false;
   private inputMode: TaktInputMode = "pi";
   private terminalInputUnsubscribe: (() => void) | undefined;
+  /** Active fullscreen focus view; owns human input while takt mode runs. */
+  private focusView: TaktFullscreenFocusView | undefined;
+  private focusGeneration = 0;
+  private focusViewOpenPromise: Promise<void> | undefined;
   private initialized = false;
   private initializePromise: Promise<void> | undefined;
 
@@ -715,8 +724,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     this.clearTerminalInputCapture();
     this.inputMode = mode;
 
-    if (mode === "takt" && context?.hasUI) {
-      this.terminalInputUnsubscribe = context.ui.onTerminalInput((data) => this.handleTaktFocusInput(data));
+    if (mode === "takt") {
+      // The fullscreen focused view becomes the single owner of human input;
+      // no global terminal-input forwarding may run in parallel.
+      void this.openTaktFullscreenFocus();
+    } else {
+      this.closeTaktFocusView("external-close");
     }
 
     this.syncInputModeStatus();
@@ -1610,6 +1623,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       clearInterval(this.refreshTimer);
       this.refreshTimer = undefined;
     }
+    this.closeTaktFocusView("external-close");
     this.clearTerminalInputCapture();
     this.inputMode = "pi";
     this.clearStatusRefreshError();
@@ -2020,36 +2034,109 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       ?? [...this.projects.values()].find((project) => project.summary !== undefined);
   }
 
-  private handleTaktFocusInput(data: string): { consume: boolean } {
-    // Keep the mode-cycle shortcut alive while takt focus owns the PTY:
-    // intercept Ctrl+Alt+T before forwarding so the user is never locked out.
-    if (matchesKey(data, Key.ctrlAlt("t")) || isCtrlAltTSequence(data)) {
-      void this.cycleInputMode();
-      return { consume: true };
-    }
+  /** Bridge-owned running sessions eligible for fullscreen focus, in shared deterministic order. */
+  eligibleFocusSessions(): TaktFocusSession[] {
+    const currentProjectId = this.context ? projectPathKey(this.context.cwd) : undefined;
+    const eligible = [...this.projects.values()]
+      .filter((project) => project.runner.isRunning)
+      .map((project): TaktFocusSession => ({
+        id: project.id,
+        label: project.label,
+        cwd: project.cwd,
+        get terminal() {
+          return project.runner.terminal;
+        },
+        inputMode: "takt",
+        isRunning: () => project.runner.isRunning,
+        write: (data) => project.runner.write(data),
+        resize: (columns, rows) => project.runner.resize(columns, rows),
+        subscribe: (listener) => project.runner.subscribe(listener),
+      }));
+    return orderTaktFocusSessions(eligible);
+  }
 
-    const activeForQueue = this.activeRunningProject();
-    if (
-      activeForQueue?.stage === "running" &&
-      !data.startsWith("\u001b") &&
-      data !== "\r" &&
-      data !== "\n"
-    ) {
-      // Workflow mid-execution: buffer printable keystrokes instead of letting
-      // them vanish into the running TAKT process.
-      activeForQueue.queuedInputs?.enqueue(data);
-      return { consume: true };
+  private async openTaktFullscreenFocus(): Promise<void> {
+    const context = this.context;
+    if (!context?.hasUI || this.focusViewOpenPromise !== undefined) {
+      return;
     }
+    const eligible = this.eligibleFocusSessions();
+    if (eligible.length === 0) {
+      await this.setInputMode("pi", { quiet: true });
+      context.ui.notify("No running bridge-owned TAKT session to focus.", "warning");
+      return;
+    }
+    const generation = ++this.focusGeneration;
+    const currentProjectId = projectPathKey(context.cwd);
+    this.focusViewOpenPromise = context.ui.custom<void>((tui, _theme, _keybindings, done) => {
+      const view = new TaktFullscreenFocusView({
+        sessions: eligible,
+        initialSessionId: currentProjectId,
+        callbacks: {
+          requestRender: () => tui.requestRender(),
+          notify: (message, level) => context.ui.notify(message, level === "warning" ? "warning" : "info"),
+          onModeCycle: () => {
+            void this.cycleInputMode();
+          },
+          onExit: (result) => {
+            if (generation !== this.focusGeneration) {
+              return; // stale view from a replaced session/mode change
+            }
+            done();
+            this.handleTaktFocusExit(result);
+          },
+        },
+      });
+      this.focusView = view;
+      return {
+        render: (width: number) =>
+          view.render(width, Math.max(4, Number(tui.terminal?.rows ?? 24))),
+        invalidate: () => view.invalidate(),
+        handleInput: (data: string) => view.handleInput(data),
+      };
+    }, {
+      overlay: true,
+      overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", margin: 0 },
+    });
+    try {
+      await this.focusViewOpenPromise;
+    } finally {
+      this.focusViewOpenPromise = undefined;
+      if (this.focusView !== undefined && generation === this.focusGeneration) {
+        // The host closed the component without our onExit path running.
+        this.focusView.close("external-close");
+        this.focusView = undefined;
+        this.focusGeneration += 1;
+      }
+    }
+  }
 
-    const project = this.activeRunningProject();
-    if (!project) {
+  private closeTaktFocusView(reason: TaktFocusExitResult["reason"]): void {
+    this.focusGeneration += 1;
+    this.focusView?.close(reason);
+    this.focusView = undefined;
+  }
+
+  private handleTaktFocusExit(result: TaktFocusExitResult): void {
+    this.focusView = undefined;
+    const label = result.session?.label ?? "session";
+    if (result.reason === "user-escape") {
+      this.context?.ui.notify(`Left TAKT focus (${label}).`, "info");
       void this.setInputMode("pi", { quiet: true });
-      this.context?.ui.notify("TAKT focus ended because no bridge-owned session is running.", "warning");
-      return { consume: true };
+      return;
     }
-
-    project.runner.write(data);
-    return { consume: true };
+    if (result.reason === "runner-ended") {
+      const otherRunning = this.eligibleFocusSessions().filter((session) => session.id !== result.session?.id).length;
+      this.context?.ui.notify(
+        `TAKT ${label} finished.${otherRunning > 0 ? ` ${otherRunning} other session(s) still running.` : ""}`,
+        "info",
+      );
+      // Never re-pin automatically: return straight to Pi so the next
+      // keystroke cannot reach another session unexpectedly.
+      void this.setInputMode("pi", { quiet: true });
+      return;
+    }
+    // external-close: the caller already manages mode state and notifications.
   }
 
   private clearTerminalInputCapture(): void {
