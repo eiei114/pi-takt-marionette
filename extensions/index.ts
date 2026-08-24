@@ -1,7 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { matchesKey, Key, Text } from "@earendil-works/pi-tui";
-import { TaktAcpClient, type TaktEnqueueResult } from "../lib/takt-acp-client.ts";
+import {
+  TaktAcpClient,
+  extractWorkflowDirective,
+  type TaktEnqueueResult,
+  verifyEnqueueWorkflow,
+} from "../lib/takt-acp-client.ts";
 import {
   cycleTaktInputMode,
   describeTaktInputMode,
@@ -75,6 +80,11 @@ import {
   listWorkflowNames,
   type WorkflowStepRef,
 } from "../lib/takt-workflow-steps.ts";
+import {
+  assertWorkflowCatalogReady,
+  resolveWorkflowCatalog,
+  type WorkflowCatalog,
+} from "../lib/takt-workflow-catalog.ts";
 import {
   applyStepModelSelections,
   type StepModelSelection,
@@ -164,6 +174,21 @@ const TAKT_ENQUEUE_TASK_PARAMETERS = Type.Object({
   task: Type.String({ description: "Exact ready-to-run task body to queue; this does not start execution" }),
 });
 
+const TAKT_WORKFLOW_CATALOG_PARAMETERS = Type.Object({
+  profile: Type.Optional(Type.String({
+    description: "Named TAKT profile or exact project path; defaults to the current Pi project",
+  })),
+  query: Type.Optional(Type.String({
+    description: "Optional case-insensitive search over workflow id, description, and categories",
+  })),
+});
+
+const TAKT_RUN_PENDING_PARAMETERS = Type.Object({
+  profile: Type.Optional(Type.String({
+    description: "Named TAKT profile or exact project path; defaults to pi-docs",
+  })),
+});
+
 const TAKT_PROJECT_SETUP_PARAMETERS = Type.Object({
   profile: Type.Optional(Type.String({
     description: "Named profile; defaults to a safe slug from the target folder name",
@@ -200,7 +225,12 @@ const TAKT_READ_SCREEN_PARAMETERS = Type.Object({
 });
 
 type TaktBridgeStatus = Pick<TaktSummary, "status"> & Partial<Pick<TaktSummary, "pid" | "stage" | "lastExit">>;
-type TaktBridgeEnqueueResult = TaktEnqueueResult & { project: string; cwd: string };
+type TaktBridgeEnqueueResult = TaktEnqueueResult & {
+  project: string;
+  cwd: string;
+  expectedWorkflow: string;
+  workflowVerified: true;
+};
 
 async function showStatus(
   ctx: ExtensionContext,
@@ -250,6 +280,8 @@ interface ManagedProject {
   stage: TaktExecStage;
   promptPreview?: string;
   execTracking?: TaktExecTracking;
+  /** Queue/run starts at a terminal prompt; allow one explicit initial /go. */
+  pendingRunAwaitingInput?: boolean;
   queuedInputs?: TaktInputQueue;
 }
 
@@ -262,6 +294,7 @@ interface TaktExecTracking {
 class TaktBridgeRuntime implements TaktProjectStackSource {
   private readonly projects = new Map<string, ManagedProject>();
   private readonly profiles = new Map<string, TaktProjectProfile>();
+  private readonly unverifiedQueueWorkflows = new Map<string, string>();
   private readonly listeners = new Set<() => void>();
   private context: ExtensionContext | undefined;
   private refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -453,7 +486,24 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (!project) {
       return undefined;
     }
-    return this.enqueueTaskInProject(project, task, options);
+    let selectedWorkflow: string | undefined;
+    try {
+      selectedWorkflow = extractWorkflowDirective(task)
+        ?? await this.selectWorkflowForProject(project);
+    } catch (error) {
+      context.ui.notify(`TAKT workflow selection failed: ${errorMessage(error)}`, "error");
+      if (options.throwOnError) {
+        throw error;
+      }
+      return undefined;
+    }
+    if (!selectedWorkflow) {
+      return undefined;
+    }
+    const taskBody = extractWorkflowDirective(task)
+      ? task
+      : `${task.trim()}\n\n## Constraints\n- workflow: ${selectedWorkflow}`;
+    return this.enqueueTaskInProject(project, taskBody, options);
   }
 
   async enqueueProfileTask(
@@ -477,6 +527,39 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     return result;
   }
 
+  async workflowCatalog(
+    profileOrPath = "",
+    query = "",
+  ): Promise<WorkflowCatalog> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      throw new Error("TAKT bridge requires an interactive Pi UI");
+    }
+    const project = profileOrPath.trim()
+      ? this.ensureProject(this.resolveTargetPath(profileOrPath, context.cwd))
+      : this.currentProject();
+    const catalog = assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+      taktCommand: process.env.TAKT_COMMAND ?? "takt",
+    }));
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) {
+      return catalog;
+    }
+    const workflows = catalog.workflows.filter((entry) =>
+      [entry.name, entry.description ?? "", ...entry.categories]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(normalizedQuery));
+    const names = new Set(workflows.map((entry) => entry.name));
+    return {
+      ...catalog,
+      workflows,
+      categories: filterWorkflowCatalogCategories(catalog.categories, names),
+      ready: workflows.length > 0,
+      errors: workflows.length > 0 ? catalog.errors : [`No workflows match query: ${query}`],
+    };
+  }
+
   private async enqueueTaskInProject(
     project: ManagedProject,
     task: string,
@@ -490,7 +573,27 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       if (!task.trim()) {
         throw new Error("TAKT task must not be empty");
       }
-      const result = await project.acp.enqueue(task);
+      const expectedWorkflow = extractWorkflowDirective(task);
+      if (!expectedWorkflow) {
+        throw new Error("TAKT task must include an exact `workflow: <id>` directive before enqueueing");
+      }
+      const catalog = assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+        taktCommand: process.env.TAKT_COMMAND ?? "takt",
+      }));
+      if (!catalog.workflows.some((workflow) => workflow.name === expectedWorkflow)) {
+        throw new Error(
+          `Workflow "${expectedWorkflow}" is not an enabled standalone workflow in the effective TAKT catalog; enqueue blocked`,
+        );
+      }
+      const acpResult = await project.acp.enqueue(task);
+      let result: ReturnType<typeof verifyEnqueueWorkflow>;
+      try {
+        result = verifyEnqueueWorkflow(task, acpResult);
+      } catch (error) {
+        this.unverifiedQueueWorkflows.set(project.id, errorMessage(error));
+        throw error;
+      }
+      this.unverifiedQueueWorkflows.delete(project.id);
       context.ui.notify(`TAKT task queued for ${project.label} (worktree run).`, "info");
       await this.refreshProject(project, { includeTaskList: false });
       return { project: project.label, cwd: project.cwd, ...result };
@@ -534,7 +637,6 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       context.ui.notify(externalSessionError(project).message, "warning");
       return;
     }
-
     const confirmed = await context.ui.confirm(
       "Start TAKT",
       `Run all pending tasks in ${project.label}?\n${project.cwd}\nTAKT keeps its worktree setting.`,
@@ -544,14 +646,76 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
 
     try {
-      project.runner.reconcile();
-      if (project.runner.hasSession) {
-        await project.runner.dispose();
-      }
-      await project.runner.start();
-      await this.showLive();
+      await this.startPendingProject(project);
     } catch (error) {
       context.ui.notify(`TAKT start failed for ${project.label}: ${errorMessage(error)}`, "error");
+    }
+  }
+
+  async runPendingProfile(
+    profileName = "pi-docs",
+    signal?: AbortSignal,
+    onUpdate?: (message: string) => void,
+  ): Promise<{ profile: string; cwd: string; pending: number; started: true }> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      throw new Error("TAKT bridge requires an interactive Pi UI");
+    }
+    throwIfAborted(signal);
+    const profile = this.profiles.get(normalizeProfileName(profileName));
+    if (!profile) {
+      throw new Error(`TAKT profile not found: ${profileName}. Run takt_project_setup first.`);
+    }
+    const project = this.ensureProject(profile.cwd);
+    const pending = await this.startPendingProject(project, onUpdate, signal);
+    return { profile: profile.name, cwd: project.cwd, pending, started: true };
+  }
+
+  private async startPendingProject(
+    project: ManagedProject,
+    onUpdate?: (message: string) => void,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      throw new Error("TAKT bridge requires an interactive Pi UI");
+    }
+    const unverifiedWorkflow = this.unverifiedQueueWorkflows.get(project.id);
+    if (unverifiedWorkflow) {
+      throw new Error(
+        `TAKT pending execution is blocked for ${project.label} until the previous ACP workflow mismatch is resolved: ${unverifiedWorkflow}`,
+      );
+    }
+    assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+      taktCommand: process.env.TAKT_COMMAND ?? "takt",
+    }));
+    if (project.runner.isRunning) {
+      throw new Error(`TAKT is already running in ${project.label}; use takt_read_screen or takt_stop first`);
+    }
+    if (!await this.refreshControlState(project)) {
+      throw new Error(`TAKT status check failed for ${project.label}`);
+    }
+    if (blocksNewExecution(project.summary)) {
+      await this.showLive(false);
+      throw externalSessionError(project);
+    }
+    const pending = project.summary?.pending ?? 0;
+    throwIfAborted(signal);
+
+    project.runner.reconcile();
+    if (project.runner.hasSession) {
+      await project.runner.dispose();
+    }
+    this.setProjectStage(project, "starting", onUpdate, `Starting takt run for ${pending} pending task(s) in ${project.label}…`);
+    try {
+      await project.runner.start(["run"]);
+      project.pendingRunAwaitingInput = true;
+      this.setProjectStage(project, "running", onUpdate, `TAKT running all pending tasks in ${project.label}.`);
+      await this.showLive(false);
+      return pending;
+    } catch (error) {
+      this.setProjectStage(project, "failed", onUpdate);
+      throw error;
     }
   }
 
@@ -668,7 +832,8 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (text === undefined || !text.trim()) {
       return;
     }
-    if (project.stage === "running") {
+    const isInitialQueueRunGo = project.pendingRunAwaitingInput === true && containsTaktGoCommand(text);
+    if (project.stage === "running" && !isInitialQueueRunGo) {
       const depth = project.queuedInputs?.enqueue(text) ?? 0;
       context.ui.notify(
         `⏳ TAKT ${project.label} is executing; input queued (⏳q${depth}). It flushes when the session is ready, or via /taktn:flush.`.replace("/taktn:", "/takt:"),
@@ -677,6 +842,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       return;
     }
     if (containsTaktGoCommand(text)) {
+      project.pendingRunAwaitingInput = false;
       this.beginExecTracking(project);
       this.setProjectStage(project, "running");
     }
@@ -1092,7 +1258,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     options: { provider?: string; model?: string; replace?: boolean } = {},
     signal?: AbortSignal,
     onUpdate?: (message: string) => void,
-  ): Promise<{ profile: string; cwd: string; provider: string; model?: string; replaced: boolean }> {
+  ): Promise<{ profile: string; cwd: string; provider: string; model?: string; workflow?: string; replaced: boolean }> {
     const context = this.context;
     if (!context?.hasUI) {
       throw new Error("TAKT bridge requires an interactive Pi UI");
@@ -1144,7 +1310,14 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       this.setProjectStage(project, "running", onUpdate, `TAKT resumed in ${project.label}.`);
       await this.setInputMode("pi-auto", { quiet: true });
       context.ui.notify(`TAKT resumed for ${project.label}. Input mode: pi-auto.`, "info");
-      return { profile: profile.name, cwd: project.cwd, provider, ...(model ? { model } : {}), replaced };
+      return {
+        profile: profile.name,
+        cwd: project.cwd,
+        provider,
+        ...(model ? { model } : {}),
+        ...(resumableRun?.workflow ? { workflow: resumableRun.workflow } : {}),
+        replaced,
+      };
     } catch (error) {
       await stopWaitDispose(project.runner, undefined, TAKT_LIFECYCLE_TIMEOUT_MS);
       this.setProjectStage(project, signal?.aborted ? "stopped" : "failed");
@@ -1352,6 +1525,32 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     this.persistProjects();
     await this.refreshProjects();
     return { ...local, profile: profileName, registered: true };
+  }
+
+  private async selectWorkflowForProject(project: ManagedProject): Promise<string | undefined> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      return undefined;
+    }
+    const catalog = assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+      taktCommand: process.env.TAKT_COMMAND ?? "takt",
+    }));
+    const labels = catalog.workflows.map((workflow) => [
+      workflow.name,
+      workflow.layer,
+      workflow.categories.join(" / ") || "Other",
+      workflow.description ?? "",
+    ].filter(Boolean).join(" · "));
+    const selected = await openSearchableSelect(
+      context,
+      `Workflow for ${project.label} (${catalog.workflows.length}; category/search)`,
+      labels,
+    );
+    if (!selected) {
+      return undefined;
+    }
+    const index = labels.indexOf(selected);
+    return catalog.workflows[index]?.name;
   }
 
   /**
@@ -1587,6 +1786,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       this.flushQueuedInputsFor(project, { auto: true });
     }
     if (stage === "stopped" || stage === "completed" || stage === "failed") {
+      project.pendingRunAwaitingInput = undefined;
       project.queuedInputs?.clearAll();
       void this.showLive(false);
     }
@@ -2361,6 +2561,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function filterWorkflowCatalogCategories(
+  categories: WorkflowCatalog["categories"],
+  names: ReadonlySet<string>,
+): WorkflowCatalog["categories"] {
+  return categories.flatMap((category) => {
+    const workflows = category.workflows.filter((name) => names.has(name));
+    const children = filterWorkflowCatalogCategories(category.children, names);
+    return workflows.length > 0 || children.length > 0
+      ? [{ name: category.name, workflows, children }]
+      : [];
+  });
+}
+
 function isTaktTaskListError(error: unknown): boolean {
   return errorMessage(error).startsWith("TAKT task list ");
 }
@@ -2959,6 +3172,32 @@ export default function register(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "takt_workflow_catalog",
+    label: "TAKT Workflow Catalog",
+    description: "Read the effective TAKT standalone workflow catalog, including builtin workflows, categories, sources, and search data.",
+    promptSnippet: "Read the TAKT workflow catalog before selecting a workflow",
+    promptGuidelines: [
+      "Use after takt_project_setup and before planning a fresh task.",
+      "The catalog follows TAKT project > user-global > builtin precedence and honors builtin disablement settings.",
+      "Only standalone workflows are returned; callable/internal workflows are not selectable.",
+      "If the catalog is unavailable, stop. Do not silently choose default or enqueue/run.",
+      "Use query for case-insensitive id, description, or category search.",
+    ],
+    parameters: TAKT_WORKFLOW_CATALOG_PARAMETERS,
+    async execute(_toolCallId, params, _signal, _onUpdate, context) {
+      const activeRuntime = await getRuntime(context);
+      const catalog = await activeRuntime.workflowCatalog(params.profile?.trim() || "", params.query ?? "");
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(catalog, null, 2),
+        }],
+        details: catalog,
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "takt_enqueue_task",
     label: "TAKT Enqueue Task",
     description: "Queue a confirmed task through TAKT ACP without starting execution.",
@@ -2966,8 +3205,9 @@ export default function register(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Call only after the task body is finalized and the user has confirmed enqueueing.",
       "Use takt_project_setup first when the named profile or exact target project is not ready.",
-      "This tool creates a pending task only; use takt_exec_prompt or takt-pi-runner for execution.",
+      "This tool creates a pending task only; use takt_run_pending for explicit queue/run execution.",
       "Pass the exact task body unchanged. Do not silently shorten acceptance criteria or verification steps.",
+      "The task body must contain one exact workflow: <id> directive; ACP's persisted workflow is verified before success is returned.",
     ],
     parameters: TAKT_ENQUEUE_TASK_PARAMETERS,
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
@@ -2979,9 +3219,39 @@ export default function register(pi: ExtensionAPI): void {
       return {
         content: [{
           type: "text",
-          text: `TAKT task queued: ${result.project}\n${result.cwd}\nstopReason: ${result.stopReason}`,
+          text: `TAKT task queued: ${result.project}\n${result.cwd}\nworkflow: ${result.workflow}\nverified: ${result.workflowVerified}\nstopReason: ${result.stopReason}`,
         }],
         details: result,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "takt_run_pending",
+    label: "TAKT Run Pending",
+    description: "Explicitly run all pending TAKT tasks for a named profile through the shared bridge PTY/widget lifecycle.",
+    promptSnippet: "Run all queued TAKT tasks after the user explicitly asks to execute",
+    promptGuidelines: [
+      "Call only after the user explicitly says to run or execute queued work.",
+      "Planning and takt_enqueue_task never call this tool automatically.",
+      "This runs all pending tasks with public `takt run`; it does not use takt exec or a preset.",
+      "Use takt_read_screen for progress and takt_stop for recovery; do not shell out to takt run.",
+    ],
+    parameters: TAKT_RUN_PENDING_PARAMETERS,
+    async execute(_toolCallId, params, signal, onUpdate, context) {
+      const activeRuntime = await getRuntime(context);
+      const result = await activeRuntime.runPendingProfile(
+        params.profile?.trim() || "pi-docs",
+        signal,
+        (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: {} }),
+      );
+      return {
+        content: [{
+          type: "text",
+          text: `TAKT run started: ${result.profile}\n${result.cwd}\npending: ${result.pending}\npath: queue → takt run`,
+        }],
+        details: result,
+        terminate: true,
       };
     },
   });
@@ -3076,7 +3346,7 @@ export default function register(pi: ExtensionAPI): void {
       return {
         content: [{
           type: "text",
-          text: `TAKT resumed: ${result.profile}\n${result.cwd}\nprovider: ${result.provider}${result.model ? `\nmodel: ${result.model}` : ""}\nmode: pi-auto`,
+          text: `TAKT resumed: ${result.profile}\n${result.cwd}\nprovider: ${result.provider}${result.model ? `\nmodel: ${result.model}` : ""}${result.workflow ? `\nworkflow: ${result.workflow} (locked from checkpoint)` : ""}\nmode: pi-auto`,
         }],
         details: result,
         terminate: true,

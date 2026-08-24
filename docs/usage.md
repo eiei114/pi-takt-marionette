@@ -1,23 +1,38 @@
 # Usage
 
-## Queue a task
+## Select, queue, and run a task
 
-1. Run `/takt:enqueue [path]` in Pi. Omit the path for the current Pi project.
-2. Enter the task description.
-3. The extension sends `/go <task>` through `takt-acp` with
-   `defaultAction: "enqueue"`.
-4. TAKT writes the pending task using its own worktree defaults.
+Normal implementation uses one explicit workflow contract:
+
+1. Start with `takt-pi-orchestrator` and resolve the exact target/profile.
+2. Call `takt_workflow_catalog`. It reads effective project > user-global >
+   builtin standalone workflows, honors `enable_builtin_workflows` and
+   `disabled_builtins`, and returns categories, descriptions, and source.
+3. Always show/select one workflow for a fresh route. Explicit workflow
+   directives and resume workflows are displayed as locked. Catalog failure is
+   fail-closed; never silently choose `default`.
+4. Planner produces one task body with an exact `workflow: <id>` line and asks
+   for confirmation.
+5. `takt_enqueue_task` sends `/go <task>` through `takt-acp` with
+   `defaultAction: "enqueue"`, then verifies ACP's persisted workflow. A
+   mismatch or missing workflow result preserves the pending task as
+   unverified and blocks execution.
+6. After explicit user run intent, call `takt_run_pending` with the named
+   profile. It starts public `takt run` for **all pending tasks** in the shared
+   PTY/widget lifecycle. `/takt:start` does the same with interactive
+   confirmation.
 
 The bridge does not write `.takt/tasks.yaml` itself. ACP is the control
-boundary for task creation.
+boundary for task creation. `takt exec` is separate instant/interactive mode,
+not the normal queue/run path.
 
 For agent-driven work, start with the bundled `takt-pi-orchestrator` Skill. It
 asks the minimum TAKT target/intent/setup questions, then routes to
 `takt-pi-task-planner` or `takt-pi-runner`. The planner discusses the goal,
 scope, non-goals, acceptance criteria, and validation in Pi, asks for
-confirmation, then calls `takt_enqueue_task`. The tool queues the finalized
-body through ACP and does not start execution. The runner handles explicit
-execution and recovery.
+confirmation, then calls `takt_enqueue_task`. The tool queues and verifies the
+finalized body through ACP and does not start execution. The runner handles
+explicit queue/run execution and recovery.
 
 ## Start and stop
 
@@ -81,16 +96,16 @@ explicit alias form.
 
 ## Agent Skill automation
 
-The package includes `takt-pi-runner`. When the user asks Pi to execute an issue
-through TAKT, the skill first calls `takt_read_screen` when an existing run
-may be present, then calls `takt_exec_prompt` with a concise task body and
-`replace: true`. The tool resolves the named profile, reconciles the current
-session, stops only a bridge-owned PTY, waits for its exit, disposes its PTY and
-screen, then runs `takt clear` and starts a fresh `takt exec <preset>`, submits
-the body as a bracketed paste, then submits `/go`. With `replace: true`, the
-clear step is mandatory even if `clear: false` is supplied. It returns after
-submission, switches input mode to `pi-auto`, and keeps
-the live raw PTY visible in the Pi project stack.
+The package includes `takt-pi-runner`. For normal implementation, the skill
+preserves the orchestrator's locked `workflow: <id>` contract and calls
+`takt_run_pending` only after explicit user run intent. The tool resolves the
+named profile, starts all pending tasks through public `takt run`, and shares
+the live raw PTY/widget lifecycle with `/takt:start`. It returns after the PTY
+starts; use `takt_read_screen` and the widget for progress.
+
+`takt_exec_prompt` remains available only for an explicit instant/interactive
+`takt exec` request. That path owns clear → exec → prompt → `/go` and may enter
+`pi-auto`; it is not used for the normal planner → enqueue → queue/run path.
 
 Use `takt_stop` to stop a stuck bridge-owned session without confirmation, and
 `takt_set_mode` for explicit mode changes. `takt_read_screen` reports status,
@@ -125,7 +140,7 @@ external live PID.
 
 For non-DTM projects using a custom Pi provider, configure required Pi
 extensions in the project's `.takt/config.yaml` under
-`provider_options.pi.extensions`. TAKT 0.58 does not reliably carry
+`provider_options.pi.extensions`. TAKT 0.61 does not reliably carry
 actor-local `provider_options` from an exec preset into the generated immutable
 workflow, so the project-level setting is the stable route for models such as
 `cursor/composer-2.5-fast`.
@@ -273,11 +288,10 @@ task-management flow.
 
 When a running run has a workflow bundle, each project card shows its current
 step and phase as a compact monospace bar, for example
-`flow default [##########>---------] 2/3 step: implement · p1/3 execute`.
-Workflows resolved from TAKT's built-in set are marked with `(default)`, for
-example `flow dual (default)`, so they stay distinguishable from workflows
-defined in the project's `.takt/workflows`. Before run metadata is available,
-the bar tracks bridge stages such as `waiting prompt` and `sending go` instead.
+`flow default · builtin [##########>---------] 2/3 step: implement · p1/3 execute`.
+The resolved source (`builtin`, `user`, or `project`) stays visible so duplicate
+workflow names remain distinguishable. Before run metadata is available, the
+bar tracks bridge stages such as `waiting prompt` and `sending go` instead.
 
 ### Per-step model selection (`/takt:models`)
 

@@ -127,6 +127,8 @@ async function setupFocusHarness(projectA, projectB) {
   const logDir = join(root, "logs");
   mkdirSync(logDir);
   const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
   const profiles = [{ name: "alpha", cwd: projectA, preset: "default" }];
   if (projectB) {
     profiles.push({ name: "beta", cwd: projectB, preset: "default" });

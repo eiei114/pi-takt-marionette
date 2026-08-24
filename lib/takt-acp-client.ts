@@ -35,10 +35,66 @@ export interface TaktEnqueueResult {
   sessionId: string;
   stopReason: string;
   messages: string[];
+  /** Workflow reported by TAKT's ACP enqueue result, when present. */
+  workflow?: string;
+}
+
+export interface VerifiedTaktEnqueueResult extends TaktEnqueueResult {
+  expectedWorkflow: string;
+  workflowVerified: true;
 }
 
 export function buildEnqueuePrompt(task: string): string {
   return `/go ${task.trim()}`;
+}
+
+/** Read the exact workflow contract written by the planner. */
+export function extractWorkflowDirective(text: string): string | undefined {
+  const matches = [...text.matchAll(/^\s*(?:[-*]\s+)?workflow\s*:\s*([^\s`#]+)\s*$/gim)];
+  return matches.at(-1)?.[1]?.trim() || undefined;
+}
+
+/** Read the workflow that TAKT reports after persisting an ACP task. */
+export function extractEnqueuedWorkflow(messages: readonly string[]): string | undefined {
+  let pendingResultIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (/status\s*:\s*pending/i.test(messages[index] ?? "")) {
+      pendingResultIndex = index;
+      break;
+    }
+  }
+  if (pendingResultIndex < 0) {
+    return undefined;
+  }
+  return extractWorkflowDirective(messages.slice(pendingResultIndex).join("\n"));
+}
+
+export function verifyEnqueueWorkflow(
+  task: string,
+  result: TaktEnqueueResult,
+): VerifiedTaktEnqueueResult {
+  const expectedWorkflow = extractWorkflowDirective(task);
+  if (!expectedWorkflow) {
+    throw new Error("TAKT task must include an exact `workflow: <id>` directive before enqueueing");
+  }
+  const actualWorkflow = result.workflow ?? extractEnqueuedWorkflow(result.messages);
+  if (!actualWorkflow) {
+    throw new Error(
+      `TAKT ACP enqueue did not report a workflow for the pending task; it remains unverified (${expectedWorkflow})`,
+    );
+  }
+  if (actualWorkflow !== expectedWorkflow) {
+    throw new Error(
+      `TAKT ACP workflow mismatch: requested ${expectedWorkflow}, persisted ${actualWorkflow}; `
+      + "the pending task was preserved and execution is blocked",
+    );
+  }
+  return {
+    ...result,
+    workflow: actualWorkflow,
+    expectedWorkflow,
+    workflowVerified: true,
+  };
 }
 
 export function normalizeAcpUpdate(notification: SessionNotification): TaktAcpUpdate {
@@ -134,10 +190,13 @@ export class TaktAcpClient {
         childError,
       ]);
 
+      const messages = updates.flatMap((update) => (update.text ? [update.text] : []));
+      const workflow = extractEnqueuedWorkflow(messages);
       return {
         sessionId: result.sessionId,
         stopReason: result.prompt.stopReason,
-        messages: updates.flatMap((update) => (update.text ? [update.text] : [])),
+        messages,
+        ...(workflow ? { workflow } : {}),
       };
     } catch (error) {
       const detail = stderr.value;

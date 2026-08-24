@@ -9,12 +9,18 @@ Pi command / project path
         │
         ├── profile registry ── explicit alias → project cwd + exec preset
         │
+        ├── takt_workflow_catalog tool ── effective project → user → builtin
+        │                                  standalone catalog + categories/search
+        ├── orchestrator → planner ── exact `workflow: <id>` task contract
+        │                              │
+        ├── takt_enqueue_task / takt-acp ── enqueue + verify persisted workflow
+        │                              │
+        ├── takt_run_pending tool ── explicit all-pending queue/run intent
+        │
         ├── takt_exec_prompt tool ── reconcile → stop → clear → exec → prompt → auto `/go` or manual `awaiting_go`
         ├── takt_submit_go tool ── explicit raw `/go` + Enter → pi-auto
         ├── takt_resume_run tool ── explicit provider/model → resume → Requeue → pi-auto (no clear)
         ├── takt_stop / takt_set_mode tools ── agent recovery without shell/taskkill
-        │
-        ├── takt_enqueue_task / takt-acp (stdio, ACP) ── enqueue confirmed task
         │
         └── node-pty → `takt run` / `takt exec` in selected project
                          │
@@ -26,11 +32,20 @@ Pi command / project path
 ## Boundaries
 
 - ACP is the primary protocol for enqueueing.
+- `takt_workflow_catalog` is the read-only selection seam. It follows TAKT's
+  project > user-global > builtin resolution, honors builtin enable/ignore
+  settings, deduplicates names, exposes categories/source/description, and
+  excludes callable/internal workflows. Catalog failure is fail-closed.
 - `takt_enqueue_task` is the agent-facing queue seam. It accepts a finalized
-  task body, resolves an explicit profile/project, and stops after ACP creates
-  the pending task. `takt-pi-orchestrator` is the front door that resolves
-  intent and setup before handing off to `takt-pi-task-planner` for
-  clarification or `takt-pi-runner` for execution/recovery.
+  task body with one exact `workflow: <id>` directive, resolves an explicit
+  profile/project, and verifies the workflow reported by ACP after the pending
+  task is written. A mismatch or missing report leaves the pending task in
+  place as unverified and blocks execution. `takt-pi-orchestrator` owns
+  selection; planner only clarifies/queues.
+- `takt_run_pending` is the agent-facing execution seam. It requires explicit
+  run intent and shares the `/takt:start` run-controller/PTY/widget lifecycle;
+  it starts public `takt run` for all pending tasks. `takt_exec_prompt` remains
+  an explicit instant/interactive escape hatch, not the normal route.
 - Public TAKT CLI commands are used through a PTY so TAKT sees a real terminal
   and keeps its normal screen behavior.
 - `.takt/runs/*/meta.json` is the persistent run state source. NDJSON logs are
@@ -56,9 +71,10 @@ Pi command / project path
 - Project registry loading drops folders that no longer exist, preventing a
   stale registration from failing runtime initialization before the active
   project can be observed.
-- The bundled Agent Skill uses `takt_exec_prompt` for the profile-bound prompt
-  submission flow; shell execution is not used as a substitute because it would
-  hide the child PTY from the Pi widget.
+- The bundled Agent Skill uses queue/run for normal profile-bound execution;
+  shell execution is not used as a substitute because it would hide the child
+  PTY from the Pi widget. `takt_exec_prompt` is reserved for explicit
+  instant/interactive requests.
 - Manual GO mode waits for clarification to finish and exposes
   `awaitingGo: true`; only `takt_submit_go` may cross that approval boundary.
   GO commands use raw terminal input rather than bracketed-paste markers.
@@ -96,6 +112,8 @@ Pi command / project path
   When no active counts are observed during startup, only the current project
   renders a compact preparing card. During paste stages the widget overlays a
   truncated prompt preview instead of the full raw body.
+- Workflow rows show the resolved source layer (`builtin`, `user`, or
+  `project`) rather than labeling every builtin as `(default)`.
 - External pending, blocked, failed, and stale activity keeps its latest queue
   or run timestamp. Non-running cards disappear after 30 minutes without new
   activity, but the bridge never mutates `.takt/tasks.yaml` or run history as

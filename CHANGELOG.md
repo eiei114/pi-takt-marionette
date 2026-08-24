@@ -1,7 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 - 2026-08-24
 
+- Add an effective TAKT standalone workflow catalog for project, user-global,
+  and builtin workflows. Every fresh route can inspect category/search data;
+  builtin enable/ignore settings and source precedence are respected, callable
+  and internal helpers are excluded, and catalog failures fail closed.
+- Require `workflow: <id>` in queued task bodies and verify the workflow
+  reported by ACP. Add `takt_run_pending` for explicit all-pending `takt run`
+  execution through the shared PTY/widget lifecycle; keep `takt exec` as an
+  explicit instant/interactive path. Builtin workflow rows now show `· builtin`
+  instead of the misleading `(default)` label.
 - Render raw TAKT screens from the current viewport origin: normal-buffer
   scrollback no longer hides the latest reply behind stale top-of-scrollback
   lines in the live widget, `/takt:live`, and `takt_read_screen`.

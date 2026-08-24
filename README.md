@@ -31,7 +31,7 @@ compact `preparing` card. Final diagnostics remain available through
 ## Prerequisites
 
 - Pi 0.83 or later
-- TAKT 0.58 or later installed as the `takt` and `takt-acp` commands
+- TAKT 0.61 or later installed as the `takt` and `takt-acp` commands
 - A configured TAKT provider/model
 - On macOS, `node-pty` may need Xcode Command Line Tools when a matching
   native prebuild is unavailable (`xcode-select --install`). Fresh installs
@@ -80,21 +80,25 @@ pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
 | `/takt:status` | Open the optional diagnostic state overlay |
 
 The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. It
-asks the minimum setup/intent questions, prepares the exact project, and routes
-to `takt-pi-task-planner` or `takt-pi-runner`. The `takt_enqueue_task` agent
-tool queues a finalized task through ACP without starting execution. The
-planner uses it after a Pi-side conversation has settled goal, scope,
-non-goals, acceptance criteria, and validation; the runner remains the
-separate execution path.
+prepares the exact project, reads TAKT's effective standalone workflow catalog
+(project > user-global > builtin), and shows a category/search workflow choice
+on every fresh route. Builtin enable/ignore settings are respected; callable
+and internal helpers are excluded. Catalog failure is fail-closed: no silent
+`default` fallback.
 
-The bundled `takt-pi-runner` Agent Skill calls the `takt_exec_prompt` tool for
-the common issue-body → `/go` flow. Its published schema includes the `replace`
-option; the normal call passes `replace: true`. It uses the `pi-docs` profile by
-default, prefers a concise prompt, replaces a running bridge-owned session when
-needed, clears the old session, starts a fresh preset, submits `/go`, and
-switches to `pi-auto`. Raw output stays in the stacked Pi widget; long pastes
-show a truncated preview while `stage` is `pasting` / `sending_go`. Agents can
-also use `takt_stop`, `takt_resume_run`, and `takt_set_mode` for recovery.
+The normal route is **workflow selection → Pi-side planning → ACP enqueue →
+explicit queue/run**. `takt_enqueue_task` requires the exact `workflow: <id>`
+line, then verifies the workflow reported by ACP. A mismatch or missing result
+leaves the pending task for inspection as unverified and blocks execution. The
+planner never runs a task. After the user explicitly asks to execute,
+`takt_run_pending` starts one bridge-owned PTY for all pending tasks through
+public `takt run`; `/takt:start` uses the same run-controller/widget lifecycle
+with its interactive confirmation.
+
+The bundled `takt-pi-runner` Agent Skill uses `takt_run_pending` for normal
+implementation. `takt_exec_prompt` remains an explicit instant/interactive
+`takt exec` path only. `takt_stop`, `takt_resume_run`, and `takt_set_mode` remain
+available for recovery. Raw output stays in the stacked Pi widget.
 `takt_resume_run` continues a checkpoint through TAKT's `Requeue` action with
 an explicit provider/model and does not clear or replay the task.
 `takt_read_screen` reports
@@ -146,8 +150,8 @@ TAKT process launched from this Pi session, with the most active first —
 
 ```
 🎭 TAKT · 3 sessions · 1 running · 2 done
-⠋ 🟢 repo-a · dual    ███▓░░░░░░░ 🔨 implement 2/3 w1/2
-✅ repo-b · default    done · 12m
+⠋ 🟢 repo-a · dual · builtin    ███▓░░░░░░░ 🔨 implement 2/3 w1/2
+✅ repo-b · review · project    done · 12m
 ```
 
 The heartbeat spinner spins at the speed of real TAKT output: fresh writes

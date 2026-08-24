@@ -125,11 +125,11 @@ function isActiveRun(run: TaktRunSnapshot): boolean {
     run.sessionStatus === "live" || run.sessionStatus === "stale";
 }
 
-/** Mark workflows resolved from TAKT's built-in set so project-defined names stay distinguishable. */
+/** Keep the resolved workflow source visible so duplicate names stay distinguishable. */
 export function workflowLabel(run: Pick<TaktRunSnapshot, "workflow" | "workflowSource">): string {
   const normalized = run.workflow.trim().replaceAll(/\s+/g, " ");
   if (normalized.length === 0) {
     return "workflow";
   }
-  return run.workflowSource === "builtin" ? `${normalized} (default)` : normalized;
+  return run.workflowSource ? `${normalized} · ${run.workflowSource}` : normalized;
 }

@@ -23,26 +23,22 @@ skill creates **one pending task**; it does not start `takt run` or
    - acceptance criteria
    - validation commands or evidence
    - provider/agent constraints, if any
-4. Present one final task body in the template below. Ask for confirmation
+4. Require a workflow directive from the orchestrator before presenting the
+   final body. If it is missing, return to `takt-pi-orchestrator`; planner is
+   not a workflow-selection owner and must not choose `default`.
+5. Present one final task body in the template below. Ask for confirmation
    before enqueueing. Do not silently turn an idea into a task.
-5. If the target profile or project-local TAKT setup is missing, call
+6. If the target profile or project-local TAKT setup is missing, call
    `takt_project_setup` with the exact target cwd first.
-6. After confirmation, call `takt_enqueue_task` with the finalized body and
+7. After confirmation, call `takt_enqueue_task` with the finalized body and
    named profile. Preserve the body exactly.
-   If the orchestrator supplied a project workflow directive, keep that literal
-   line in the task body; do not remove or rewrite it during summarization.
-   If no `workflow:` line is present and the target has multiple matching
-   project workflows, ask once with `ask_user_question` / `cursor_ask_question`
-   before enqueueing (same ambiguous-only rule as `takt-pi-orchestrator`).
-   For DTM Cursor, use `dtm-cursor-plan-verify` (audit),
-   `dtm-cursor-plan-verify-grok` (audit-grok),
-   `dtm-cursor-implement` (feature work),
-   `dtm-cursor-bug-investigate` (bug diagnosis → implement handoff),
-   `dtm-cursor-perf-investigate` (perf diagnosis → implement handoff), or
-   `dtm-cursor-design-optimize` (local design options → implement handoff)
-   as directed by the orchestrator or the user's selection.
-7. Report the queued project, cwd, session result, and remind the user that
-   execution is still pending. Do not call `takt_exec_prompt` in this skill.
+   The body must contain exactly one literal `workflow: <id>` line. The bridge
+   verifies ACP's persisted workflow; mismatch or missing workflow output is a
+   failed, unverified enqueue, but the pending task is intentionally preserved
+   for inspection and execution is blocked.
+8. Report the queued project, cwd, verified workflow, and session result; remind
+   the user that execution is still pending. Do not call `takt_exec_prompt` or
+   `takt_run_pending` in this skill.
 
 ## Final task template
 
@@ -65,16 +61,19 @@ skill creates **one pending task**; it does not start `takt run` or
 - <manual or evidence check, if needed>
 
 ## Constraints
-- workflow: <project workflow id when required>
+- workflow: <selected standalone workflow id>
 - <provider, safety, rollout, or other explicit constraint>
 ```
 
-When a project workflow was selected (or supplied by the orchestrator), keep
-that `workflow: <id>` line under **Constraints** so enqueue/exec preserve it.
+The `workflow: <id>` line is mandatory under **Constraints**. Keep the exact
+selected standalone id so ACP enqueue and later `takt run` preserve it. Workflow
+selection is locked for this task; changing it requires a new orchestrator
+selection, not a planner rewrite.
 
 ## Boundary
 
 - Planning and queueing belong here.
-- Execution, review output, and recovery belong to `takt-pi-runner`.
+- Execution, review output, and recovery belong to `takt-pi-runner`; normal
+  execution uses `takt_run_pending` and public `takt run`.
 - Keep user decisions visible in the task body; do not invent acceptance
   criteria or claim that a queued task is complete.

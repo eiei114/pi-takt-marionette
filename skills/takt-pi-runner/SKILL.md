@@ -35,73 +35,46 @@ For interactive setup, `/takt:project:init [profile]` performs the same setup
 for the current Pi project. Use `/takt:project` or `/takt:profile:add` only for
 manual registration or when the setup tool is unavailable.
 
-## Default workflow
+## Queue/run workflow (normal)
 
-1. Prefer a concise TAKT prompt. Preserve issue numbers, file paths, constraints,
-   and code fences. Long GitHub issue bodies may be shortened to the actionable
-   scope (files to change, must/must-not, verification). The widget already
-   truncates long pasted bodies during `pasting` / `sending_go`.
+1. Require a workflow selected by `takt-pi-orchestrator`. If the task body has
+   no exact `workflow: <id>` line, return to the orchestrator; runner does not
+   select or silently default a workflow.
 2. If the target profile/project is not ready, call `takt_project_setup` first.
-3. Use the profile returned by `takt_project_setup` unchanged. Use the named
-   profile `pi-docs` only when the target was already explicitly registered as
-   `pi-docs`; never replace a setup-derived profile with `pi-docs`.
+3. Use the profile returned by setup unchanged. Use `pi-docs` only when the
+   target was already explicitly registered as `pi-docs`.
 4. Call `takt_read_screen` first when a session may already be running.
-5. Call `takt_exec_prompt` with:
+5. For normal implementation, call `takt_run_pending` only after the user
+   explicitly asks to run/execute. It runs **all pending tasks** through the
+   shared bridge PTY/widget lifecycle and public `takt run`:
 
    ```json
-   {
-     "profile": "<resolved profile>",
-     "prompt": "<concise task body>",
-     "clear": true,
-     "sendGo": true,
-     "replace": true
-   }
+   { "profile": "<resolved profile>" }
    ```
 
-   When the user requires an approval boundary, pass `goMode: "manual"`
-   instead. Wait for `awaitingGo: true`, read the live screen, and call
-   `takt_submit_go` only after approval. Do not simulate approval by sending
-   `/go` through `takt_send_input`.
+   Planning and `takt_enqueue_task` never call it automatically. A successful
+   tool return means the PTY started, not that the task completed; inspect
+   `takt_read_screen` and the live widget for progress.
 
-5. Let the tool return after the prompt and `/go` are submitted. A successful
-   submit switches input mode to `pi-auto` automatically. TAKT's raw live screen
-   remains in the Pi project stack; do not start a second TAKT process or claim
-   that the task is complete.
+6. Use `takt_exec_prompt` only when the user explicitly requests instant /
+   interactive `takt exec` behavior. That path may clear, paste, and submit
+   `/go`; it is not the queue/run implementation default.
 
 ## Project workflow overrides
 
-The orchestrator may provide a project-owned workflow directive. Preserve it
-verbatim in the task body and do not replace it with the default Pi lane.
-
-If this skill is invoked directly and the task body has **no** `workflow:`
-line, apply the same ambiguous-only rule as the orchestrator:
-
-1. List `<cwd>/.takt/workflows/*.yaml` stems.
-2. If the user already named a workflow/lane, or exactly one candidate matches
-   intent, use that id.
-3. If two or more candidates remain (same intent class or unspecified lane),
-   ask once with `ask_user_question` / `cursor_ask_question`, then insert
-   `workflow: <chosen-id>` into the prompt body before `takt_exec_prompt`.
-4. Do not ask on resume/recovery of an existing session.
+The orchestrator owns selection. Preserve its exact `workflow: <id>` directive
+in the task body; do not rewrite it, replace it, or choose an internal helper.
+If this skill is invoked directly without a workflow line, return to
+`takt-pi-orchestrator` and use `takt_workflow_catalog` before any enqueue/run.
+An explicit workflow line and a resume workflow are locked.
 
 For DTM Cursor (`dtm-cursor`):
 
-- Audit/design (Luna+Composer): `workflow: dtm-cursor-plan-verify`
-  (`audit` / `normal`).
-- Audit/design (Grok+Composer): `workflow: dtm-cursor-plan-verify-grok`
-  (`audit-grok` / `normal-grok`).
-- Feature implementation: `workflow: dtm-cursor-implement` (`implement`).
-- Bug diagnosis: `workflow: dtm-cursor-bug-investigate` (`bug` / `bug-investigate`);
-  after the diagnosis report, continue with `implement` rather than mixing
-  production fixes into the bug lane.
-- Perf diagnosis: `workflow: dtm-cursor-perf-investigate` (`perf` / `perf-investigate`);
-  after the diagnosis report, continue with `implement` rather than mixing
-  production optimizations into the perf lane.
-- Local design options: `workflow: dtm-cursor-design-optimize` (`design` /
-  `design-optimize`); after the options report, continue with `implement`
-  (or a short `audit` first if the report says so).
-- Bare `audit` / `normal` with both plan-verify variants present → ask; do not
-  silently default to Luna or Grok.
+- DTM lane names (`audit`, `implement`, `bug`, `perf`, `design-optimize`) are
+  search hints only. Resolve a standalone id from the effective catalog; do
+  not target internal helpers such as `development-core`.
+- Bare `audit` / `normal` with multiple candidates → ask through the
+  orchestrator; do not silently default to Luna or Grok.
 - Resume and recovery use the project's configured Pi provider/workflow.
 
 ## Recovery
@@ -114,10 +87,11 @@ For DTM Cursor (`dtm-cursor`):
 - If only stale or ownerless `running` metadata remains, inspect it first with
   `takt_read_screen`, then use `takt_stop` with `forceObserved: true`. This may
   mark stale/unknown metadata aborted but never kills an external live PID.
-- If `takt_exec_prompt` reports an already-running session, call `takt_read_screen`
-  first, then call it again with `replace: true` (the default) or call `takt_stop`
-  first. Replacement reconciles, stops the bridge-owned PTY, waits, disposes,
-  clears, and only then starts a fresh PTY.
+- If `takt_run_pending` reports an already-running session, call
+  `takt_read_screen` first, then use `takt_stop` only when the user explicitly
+  wants to interrupt it. Do not start a second queue/run PTY.
+- If the user explicitly requests instant `takt exec`, an already-running
+  session may be replaced with `takt_exec_prompt` and `replace: true`.
 - If the profile is missing, call `takt_project_setup` with the exact target cwd
   instead of editing `profiles.json` manually. If the setup tool is missing,
   report the runtime/package mismatch and stop.
@@ -127,17 +101,19 @@ For DTM Cursor (`dtm-cursor`):
   `unknown` describe lifecycle ownership.
 - Use `takt_set_mode` only when you need an explicit mode change outside the
   automatic post-submit `pi-auto` transition.
-- Never use shell `taskkill`, `takt exec`, or absolute path guessing when the
+- Never use shell `taskkill`, `takt run`, or absolute path guessing when the
   bridge tools are available.
 
 ## Rules
 
 - All TAKT agents, workers, reviewers, replans, and loop judges must use Pi
   when the task asks for Pi-only execution. Preserve that requirement exactly.
-- Never use shell `takt exec`, `cd`, or a manually typed absolute path when
-  `takt_exec_prompt` is available. The named profile is the path boundary.
+- Never use shell `takt run`, `takt exec`, `cd`, or a manually typed absolute
+  path when the bridge tools are available. The named profile is the path
+  boundary.
 - Do not use `--continue`. Use `takt_resume_run` for checkpoint recovery; use
-  `takt_exec_prompt` only when a fresh clear-and-exec task is intended.
+  `takt_run_pending` for queued work and `takt_exec_prompt` only when a fresh
+  instant/interactive exec task is explicitly intended.
 - Do not send the task body and `/go` through separate ad-hoc mechanisms unless
   recovering inside an already-running `pi-auto` session with `takt_send_input`.
 - If any required bridge tool is missing or its runtime is not initialized after

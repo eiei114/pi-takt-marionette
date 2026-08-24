@@ -29,10 +29,12 @@ test("fresh Pi runtime publishes all TAKT control tools and replace schema", () 
     "takt_project_setup",
     "takt_read_screen",
     "takt_resume_run",
+    "takt_run_pending",
     "takt_send_input",
     "takt_set_mode",
     "takt_stop",
     "takt_submit_go",
+    "takt_workflow_catalog",
   ]);
   assert.equal(tools.get("takt_exec_prompt").parameters.properties.replace.type, "boolean");
   assert.ok(tools.get("takt_exec_prompt").parameters.properties.goMode.anyOf);
@@ -40,6 +42,8 @@ test("fresh Pi runtime publishes all TAKT control tools and replace schema", () 
   assert.equal(tools.get("takt_resume_run").parameters.properties.model.type, "string");
   assert.equal(tools.get("takt_project_setup").parameters.properties.cwd.type, "string");
   assert.equal(tools.get("takt_project_setup").parameters.properties.copyGlobalPreset.type, "boolean");
+  assert.equal(tools.get("takt_run_pending").parameters.properties.profile.type, "string");
+  assert.equal(tools.get("takt_workflow_catalog").parameters.properties.query.type, "string");
 });
 
 test("fresh Pi loader exposes the executable tool schema", async () => {
@@ -55,10 +59,12 @@ test("fresh Pi loader exposes the executable tool schema", async () => {
     "takt_project_setup",
     "takt_read_screen",
     "takt_resume_run",
+    "takt_run_pending",
     "takt_send_input",
     "takt_set_mode",
     "takt_stop",
     "takt_submit_go",
+    "takt_workflow_catalog",
   ]);
   const execTool = tools.get("takt_exec_prompt").definition;
   assert.equal(execTool.parameters.type, "object");

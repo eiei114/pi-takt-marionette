@@ -41,19 +41,19 @@ test("status details include workflow progress when metadata exposes a current s
   assert.ok(lines.some((line) => line.includes("2/3 step: tests")));
 });
 
-test("built-in workflows show a (default) marker and project workflows stay unmarked", () => {
+test("workflow rows show their resolved source layer", () => {
   const builtin = renderTaktDetails({
     ...summary,
     runs: [{ ...summary.runs[0], workflow: "dual", workflowSource: "builtin" }],
   });
-  assert.ok(builtin.some((line) => line.includes("flow dual (default)")));
+  assert.ok(builtin.some((line) => line.includes("flow dual · builtin")));
 
   const project = renderTaktDetails({
     ...summary,
     runs: [{ ...summary.runs[0], workflow: "dual", workflowSource: "project" }],
   });
   assert.ok(project.some((line) => line.includes("flow dual ")));
-  assert.ok(project.every((line) => !line.includes("(default)")));
+  assert.ok(project.some((line) => line.includes("flow dual · project")));
 });
 
 test("idle widget is cleared and details remain available", () => {

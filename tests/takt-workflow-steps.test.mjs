@@ -10,6 +10,10 @@ const {
   resolveWorkflowFile,
   resetTaktRootCache,
 } = await import("../lib/takt-workflow-steps.ts");
+const {
+  assertWorkflowCatalogReady,
+  resolveWorkflowCatalog,
+} = await import("../lib/takt-workflow-catalog.ts");
 
 function makeProject() {
   return mkdtempSync(join(tmpdir(), "pi-takt-bridge-steps-"));
@@ -122,5 +126,92 @@ test("listWorkflowNames merges layers with project precedence", async () => {
     assert.ok(names.every((entry) => entry.name.length > 0));
   } finally {
     rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("workflow catalog follows TAKT precedence, categories, and standalone filtering", async () => {
+  const root = makeProject();
+  const project = join(root, "project");
+  const globalDir = join(root, "global");
+  const taktRoot = join(root, "takt");
+  const builtinDir = join(taktRoot, "builtins", "en", "workflows");
+  mkdirSync(join(project, ".takt", "workflows"), { recursive: true });
+  mkdirSync(join(globalDir, "workflows"), { recursive: true });
+  mkdirSync(builtinDir, { recursive: true });
+  mkdirSync(join(globalDir, "preferences"), { recursive: true });
+
+  writeFileSync(join(project, ".takt", "workflows", "same.yaml"), "name: same\ndescription: project\nsteps: []\n");
+  writeFileSync(join(globalDir, "workflows", "same.yaml"), "name: same\ndescription: user\nsteps: []\n");
+  writeFileSync(join(builtinDir, "same.yaml"), "name: same\ndescription: builtin\nsteps: []\n");
+  writeFileSync(join(globalDir, "workflows", "user-only.yaml"), "name: user-only\nsteps: []\n");
+  writeFileSync(join(builtinDir, "builtin-only.yaml"), "name: builtin-only\nsteps: []\n");
+  writeFileSync(join(builtinDir, "internal.yaml"), [
+    "name: internal",
+    "subworkflow:",
+    "  callable: true",
+    "  visibility: internal",
+    "steps: []",
+  ].join("\n"));
+  writeFileSync(join(taktRoot, "builtins", "en", "workflow-categories.yaml"), [
+    "workflow_categories:",
+    "  Development:",
+    "    workflows:",
+    "      - builtin-only: Builtin lane",
+    "      - same: Builtin duplicate",
+  ].join("\n"));
+  writeFileSync(join(globalDir, "preferences", "workflow-categories.yaml"), [
+    "workflow_categories:",
+    "  Custom:",
+    "    workflows:",
+    "      - user-only: User lane",
+    "show_others_category: true",
+    "others_category_name: Other",
+  ].join("\n"));
+  writeFileSync(join(globalDir, "config.yaml"), "language: en\n");
+
+  resetTaktRootCache();
+  try {
+    const catalog = await resolveWorkflowCatalog(project, {
+      taktCommand: join(taktRoot, "bin", "takt"),
+      globalConfigDir: globalDir,
+    });
+    assert.equal(catalog.ready, true);
+    assert.equal(catalog.errors.length, 0);
+    assert.deepEqual(catalog.workflows.map((entry) => entry.name), ["builtin-only", "same", "user-only"]);
+    assert.equal(catalog.workflows.find((entry) => entry.name === "same")?.layer, "project");
+    assert.equal(catalog.workflows.find((entry) => entry.name === "same")?.description, "project");
+    assert.equal(catalog.workflows.find((entry) => entry.name === "user-only")?.categories[0], "Custom");
+    assert.equal(catalog.workflows.find((entry) => entry.name === "builtin-only")?.categories[0], "builtin / Development");
+    assert.equal(assertWorkflowCatalogReady(catalog), catalog);
+  } finally {
+    resetTaktRootCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workflow catalog honors builtin disablement without falling back to a hidden default", async () => {
+  const root = makeProject();
+  const project = join(root, "project");
+  const globalDir = join(root, "global");
+  const taktRoot = join(root, "takt");
+  mkdirSync(join(project, ".takt", "workflows"), { recursive: true });
+  mkdirSync(join(globalDir, "workflows"), { recursive: true });
+  mkdirSync(join(taktRoot, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(project, ".takt", "workflows", "local.yaml"), "name: local\nsteps: []\n");
+  writeFileSync(join(taktRoot, "builtins", "en", "workflows", "builtin.yaml"), "name: builtin\nsteps: []\n");
+  writeFileSync(join(globalDir, "config.yaml"), "enable_builtin_workflows: false\n");
+
+  resetTaktRootCache();
+  try {
+    const catalog = await resolveWorkflowCatalog(project, {
+      taktCommand: join(taktRoot, "bin", "takt"),
+      globalConfigDir: globalDir,
+    });
+    assert.equal(catalog.ready, true);
+    assert.deepEqual(catalog.workflows.map((entry) => entry.name), ["local"]);
+    assert.equal(catalog.builtinEnabled, false);
+  } finally {
+    resetTaktRootCache();
+    rmSync(root, { recursive: true, force: true });
   }
 });
