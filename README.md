@@ -83,6 +83,10 @@ The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. Th
 `takt-pi-next-step` Skill is the ask-matt-style navigator for "what next?"
 requests: it inspects the current target/session/queue state, names one
 concrete next action, and hands off to the owning Skill. It
+uses dedicated preflight phase Skills for intake, project setup, workflow
+selection, enqueue verification, and the final run-intent gate. These phases
+cover everything up to execution; none starts `takt run` without explicit user
+intent.
 prepares the exact project, reads TAKT's effective standalone workflow catalog
 (project > user-global > builtin), and shows a category/search workflow choice
 on every fresh route. Builtin enable/ignore settings are respected; callable

@@ -31,11 +31,14 @@ asks the minimum TAKT target/intent/setup questions, then routes to
 `takt-pi-next-step`, `takt-pi-task-planner`, or `takt-pi-runner`.
 `takt-pi-next-step` is the ask-matt-style navigator: it reads current evidence,
 names one concrete next action, and hands off to the Skill that owns that
-boundary. The planner discusses the goal, scope, non-goals, acceptance
-criteria, and validation in Pi, asks for confirmation, then calls
-`takt_enqueue_task`. The tool queues and verifies the finalized body through
-ACP and does not start execution. The runner handles explicit queue/run
-execution and recovery.
+boundary. Its preflight phases are `takt-pi-intake`,
+`takt-pi-project-setup`, `takt-pi-workflow-selection`,
+`takt-pi-queue-gate`, and `takt-pi-run-gate`. They cover target resolution
+through the final execution-intent decision. The planner discusses the goal,
+scope, non-goals, acceptance criteria, and validation in Pi, asks for
+confirmation, then calls `takt_enqueue_task`. The tool queues and verifies the
+finalized body through ACP and does not start execution. The runner handles
+explicit queue/run execution and recovery.
 
 ## Start and stop
 

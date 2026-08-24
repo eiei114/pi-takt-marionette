@@ -11,11 +11,12 @@ Pi command / project path
         │
         ├── takt_workflow_catalog tool ── effective project → user → builtin
         │                                  standalone catalog + categories/search
-        ├── orchestrator → planner ── exact `workflow: <id>` task contract
-        │                              │
-        ├── takt_enqueue_task / takt-acp ── enqueue + verify persisted workflow
-        │                              │
-        ├── takt_run_pending tool ── explicit all-pending queue/run intent
+        ├── orchestrator → next-step ── one unmet preflight boundary
+        │       │
+        │       ├── intake → project-setup → workflow-selection
+        │       ├── planner → queue-gate ── exact `workflow: <id>` task contract
+        │       ├── takt_enqueue_task / takt-acp ── enqueue + verify workflow
+        │       └── run-gate ── explicit all-pending queue/run intent → runner
         │
         ├── takt_exec_prompt tool ── reconcile → stop → clear → exec → prompt → auto `/go` or manual `awaiting_go`
         ├── takt_submit_go tool ── explicit raw `/go` + Enter → pi-auto
@@ -32,6 +33,10 @@ Pi command / project path
 ## Boundaries
 
 - ACP is the primary protocol for enqueueing.
+- `takt-pi-next-step` is the pre-execution route navigator. Its internal phase
+  Skills resolve intake, project setup, workflow selection, task planning,
+  enqueue verification, and the final run-intent gate. Each phase has one
+  owner and a done condition; no phase starts execution implicitly.
 - `takt_workflow_catalog` is the read-only selection seam. It follows TAKT's
   project > user-global > builtin resolution, honors builtin enable/ignore
   settings, deduplicates names, exposes categories/source/description, and

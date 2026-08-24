@@ -22,31 +22,32 @@ or use `takt exec` as a shortcut for the queue/run path.
 ## Navigator procedure
 
 1. Resolve the exact target and named profile from the conversation. If either
-   is missing, ask for the exact folder or profile; never guess a path.
+   is missing, hand off to `takt-pi-intake`; never guess a path.
 2. Read current evidence before recommending a mutation:
    - use `takt_read_screen` when a bridge-owned session may be live;
-   - use `takt_project_setup` only when an exact target needs safe bootstrap;
-   - use `takt_workflow_catalog` for every fresh task route.
+   - use `takt-pi-project-setup` / `takt_project_setup` only when an exact
+     target needs safe bootstrap;
+   - use `takt-pi-workflow-selection` / `takt_workflow_catalog` for every fresh
+     task route.
 3. Classify the route using the state table below. Prefer one blocker or one
    user decision over a list of possibilities.
 4. State the next action, why it is next, the tool/Skill that owns it, and the
    observable done condition. Then perform only a safe read or ask for the
    required user intent/confirmation.
-5. Hand off to `takt-pi-orchestrator`, `takt-pi-task-planner`, or
-   `takt-pi-runner` as indicated. After the handoff, let that Skill own the
-   route; do not create a parallel plan.
+5. Hand off to the exact phase Skill or owner shown below. After the handoff,
+   let that Skill own the route; do not create a parallel plan.
 
 ## State table
 
 | Evidence | Next action |
 |---|---|
-| Target/profile unresolved | Ask for the exact target; stop. |
-| Exact target lacks bridge setup | `takt_project_setup`; done means profile and local `.takt` are ready. |
-| Fresh task has no locked workflow | `takt_workflow_catalog`, then orchestrator selection. |
+| Target/profile unresolved | `takt-pi-intake`; done means exact target, intent, and constraints are known. |
+| Exact target lacks bridge setup | `takt-pi-project-setup`; done means profile and local `.takt` are ready. |
+| Fresh task has no locked workflow | `takt-pi-workflow-selection`; done means one exact catalog id is locked. |
 | Goal or acceptance is unclear | Planner clarification; do not enqueue. |
-| Task body ready but not confirmed | Show the body and ask to enqueue. |
-| Confirmed body has no verified queue result | `takt_enqueue_task`; done means ACP workflow verification succeeds. |
-| Verified pending task, no run intent | Tell the user the next action is explicit execution; do not run yet. |
+| Task body ready but not confirmed | `takt-pi-queue-gate`; show the body and ask to enqueue. |
+| Confirmed body has no verified queue result | `takt-pi-queue-gate` → `takt_enqueue_task`; done means ACP workflow verification succeeds. |
+| Verified pending task, no run intent | `takt-pi-run-gate`; stop until explicit execution intent. |
 | User explicitly asks to run | `takt_run_pending`; done means the bridge-owned `takt run` PTY starts. |
 | Session is live or waiting for input | `takt_read_screen`, then runner follow-up or `takt_send_input` only when allowed. |
 | Session is stale or checkpointed | Inspect first; use `takt_stop`/`takt_resume_run` only for the requested recovery. |

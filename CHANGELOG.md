@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 - 2026-08-24
+
+- Split the pre-execution TAKT route into dedicated internal Skills for intake,
+  project setup, workflow selection, enqueue verification, and the final run
+  intent gate. `takt-pi-next-step` now hands off to the exact unmet preflight
+  boundary and stops before execution without explicit user intent.
+
 ## 0.3.3 - 2026-08-24
 
 - Add the `takt-pi-next-step` Skill, an ask-matt-style navigator that inspects

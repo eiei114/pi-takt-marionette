@@ -130,7 +130,12 @@ still required. The selected workflow is a task contract, not an exec preset.
 | Resolved intent | Specialized path |
 |---|---|
 | Ask what to do next or how to continue | `takt-pi-next-step` |
+| Resolve target and intent | `takt-pi-intake` |
+| Prepare exact target/profile | `takt-pi-project-setup` |
+| Select and lock a workflow | `takt-pi-workflow-selection` |
 | Discuss requirements, then make a pending task | `takt-pi-task-planner` |
+| Confirm and verify enqueue | `takt-pi-queue-gate` |
+| Ask for final execution intent | `takt-pi-run-gate` |
 | Run an already finalized queued task/issue | `takt-pi-runner` |
 | Inspect, stop, replace, or recover a session | `takt-pi-runner` recovery flow |
 | Setup only | `takt_project_setup` and stop |
