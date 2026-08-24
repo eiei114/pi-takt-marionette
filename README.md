@@ -79,7 +79,10 @@ pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
 | `/takt:stop [path]` | Confirm and interrupt a TAKT process started by Pi |
 | `/takt:status` | Open the optional diagnostic state overlay |
 
-The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. It
+The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. The
+`takt-pi-next-step` Skill is the ask-matt-style navigator for "what next?"
+requests: it inspects the current target/session/queue state, names one
+concrete next action, and hands off to the owning Skill. It
 prepares the exact project, reads TAKT's effective standalone workflow catalog
 (project > user-global > builtin), and shows a category/search workflow choice
 on every fresh route. Builtin enable/ignore settings are respected; callable

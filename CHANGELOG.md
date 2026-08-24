@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 - 2026-08-24
+
+- Add the `takt-pi-next-step` Skill, an ask-matt-style navigator that inspects
+  target, setup, catalog, queue, run, and recovery state, then routes to one
+  concrete next action without bypassing workflow selection or explicit run
+  intent.
+
 ## 0.3.2 - 2026-08-24
 
 - Add an effective TAKT standalone workflow catalog for project, user-global,

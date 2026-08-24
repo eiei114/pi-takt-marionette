@@ -28,11 +28,14 @@ not the normal queue/run path.
 
 For agent-driven work, start with the bundled `takt-pi-orchestrator` Skill. It
 asks the minimum TAKT target/intent/setup questions, then routes to
-`takt-pi-task-planner` or `takt-pi-runner`. The planner discusses the goal,
-scope, non-goals, acceptance criteria, and validation in Pi, asks for
-confirmation, then calls `takt_enqueue_task`. The tool queues and verifies the
-finalized body through ACP and does not start execution. The runner handles
-explicit queue/run execution and recovery.
+`takt-pi-next-step`, `takt-pi-task-planner`, or `takt-pi-runner`.
+`takt-pi-next-step` is the ask-matt-style navigator: it reads current evidence,
+names one concrete next action, and hands off to the Skill that owns that
+boundary. The planner discusses the goal, scope, non-goals, acceptance
+criteria, and validation in Pi, asks for confirmation, then calls
+`takt_enqueue_task`. The tool queues and verifies the finalized body through
+ACP and does not start execution. The runner handles explicit queue/run
+execution and recovery.
 
 ## Start and stop
 

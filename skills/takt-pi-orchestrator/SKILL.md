@@ -1,6 +1,6 @@
 ---
 name: takt-pi-orchestrator
-description: "Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, or recovery, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, or recovering a TAKT task. Do not start task execution or queue work before intent and target are clear."
+description: "Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, recovery, or next-step navigation, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, recovering a TAKT task, or asks what to do next. Do not start task execution or queue work before intent and target are clear."
 ---
 
 # TAKT Pi Orchestrator
@@ -19,8 +19,8 @@ the current Pi project, an explicit path, or a named profile:
    or the current Pi project when the user says “this project”, “here”, or
    otherwise makes the current folder unambiguous. Never guess a different
    path or silently search for a similarly named repository.
-2. **Intent** — setup only, discuss and queue a pending task, execute now, or
-   inspect/recover an existing session.
+2. **Intent** — setup only, ask for the next action, discuss and queue a pending
+   task, execute now, or inspect/recover an existing session.
 3. **Execution policy** — preset/profile, Pi-only provider constraint, worktree
    expectation, workflow/provider lane, and whether external side effects are
    allowed. Workflow selection is required for every fresh route. It is not a
@@ -129,6 +129,7 @@ still required. The selected workflow is a task contract, not an exec preset.
 
 | Resolved intent | Specialized path |
 |---|---|
+| Ask what to do next or how to continue | `takt-pi-next-step` |
 | Discuss requirements, then make a pending task | `takt-pi-task-planner` |
 | Run an already finalized queued task/issue | `takt-pi-runner` |
 | Inspect, stop, replace, or recover a session | `takt-pi-runner` recovery flow |
@@ -143,9 +144,14 @@ user did not name another preset. Setup is idempotent and must not copy tasks,
 runs, sessions, logs, or credentials. If the target is not exact, stop and ask
 rather than guess.
 
-After setup and workflow selection, automatically read the selected specialized
-Skill and continue in the same conversation; do not make the human choose an
-internal Skill name.
+After setup, automatically read the selected specialized Skill and continue in
+the same conversation; do not make the human choose an internal Skill name.
+Planner and runner handoffs happen only after workflow selection. For next-step
+requests, read `../takt-pi-next-step/SKILL.md` immediately after target/readiness
+resolution so it can inspect current evidence (including the catalog when
+needed) before handing back to this orchestrator or the planner/runner. The
+navigator recommends one next action; it does not bypass workflow selection,
+confirmation, or explicit run intent.
 Read `../takt-pi-task-planner/SKILL.md` for the planner route and
 `../takt-pi-runner/SKILL.md` for the runner/recovery route.
 The orchestrator does not replace the planner or runner instructions. It does
