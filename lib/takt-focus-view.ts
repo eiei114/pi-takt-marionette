@@ -53,6 +53,34 @@ export type TaktFocusPhase = "select" | "pinned" | "closed";
 
 const DEFAULT_REFRESH_MS = 100;
 
+/** Keep the tail of a long path when the pinned header must reserve fixed suffix space. */
+function truncatePathTail(value: string, maxLength: number): string {
+  if (maxLength <= 0) {
+    return "";
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (maxLength === 1) {
+    return "…";
+  }
+  return `…${value.slice(-(maxLength - 1))}`;
+}
+
+function formatPinnedHeader(
+  pinned: TaktFocusSession,
+  others: number,
+  columns: number,
+): string {
+  const othersSuffix = ` · +${others} other${others === 1 ? "" : "s"} running`;
+  const modeSuffix = ` · input: ${pinned.inputMode ?? "takt"}`;
+  const prefix = `🎭 TAKT · ${pinned.label} · `;
+  const fixedSuffix = `${modeSuffix}${othersSuffix}`;
+  const maxCwdLength = Math.max(0, columns - prefix.length - fixedSuffix.length);
+  const cwd = truncatePathTail(pinned.cwd, maxCwdLength);
+  return truncateToWidth(`${prefix}${cwd}${fixedSuffix}`, columns);
+}
+
 /**
  * Deterministic ordering shared by the session selector, navigation
  * shortcuts, and the command fallback so every path cycles identically.
@@ -324,12 +352,7 @@ export class TaktFullscreenFocusView {
       return [truncateToWidth("TAKT focus lost its pinned session.", columns)];
     }
     const others = Math.max(0, this.eligibleSessions.length - 1);
-    const header = truncateToWidth(
-      `🎭 TAKT · ${pinned.label} · ${pinned.cwd}`
-        + ` · input: ${pinned.inputMode ?? "takt"}`
-        + ` · +${others} other${others === 1 ? "" : "s"} running`,
-      columns,
-    );
+    const header = formatPinnedHeader(pinned, others, columns);
     const footer = truncateToWidth("esc back to Pi · ctrl+alt+↑/↓ switch session · ctrl+alt+t modes", columns);
 
     const bodyRows = rows - 2;
