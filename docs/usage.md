@@ -102,8 +102,13 @@ explicit alias form.
 
 ## Agent Skill automation
 
-The package includes `takt-pi-runner`. For normal implementation, the skill
-preserves the orchestrator's locked `workflow: <id>` contract and calls
+The package includes `takt-pi-runner` and `to-takt-tasks`. In the
+`grill-with-docs → to-spec → to-takt-tasks` route, one Spec is one TAKT
+execution group: child tickets remain separate artifacts, but one aggregate
+task is enqueued on one branch/worktree. `to-takt-tasks` uses the unchanged
+TAKT ACP contract: managed worktree and no automatic PR. For normal
+implementation, the runner preserves the orchestrator's locked
+`workflow: <id>` contract and calls
 `takt_run_pending` only after explicit user run intent. The tool resolves the
 named profile, starts all pending tasks through public `takt run`, and shares
 the live raw PTY/widget lifecycle with `/takt:start`. It returns after the PTY
