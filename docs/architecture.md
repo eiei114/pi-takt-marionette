@@ -15,7 +15,7 @@ Pi command / project path
         │       │
         │       ├── intake → project-setup → workflow-selection
         │       ├── planner → queue-gate ── exact `workflow: <id>` task contract
-        │       ├── takt_enqueue_task / takt-acp ── enqueue + verify workflow
+        │       ├── takt_enqueue_task ── direct task-file enqueue + verify workflow
         │       └── run-gate ── explicit all-pending queue/run intent → runner
         │
         ├── takt_exec_prompt tool ── reconcile → stop → clear → exec → prompt → auto `/go` or manual `awaiting_go`
@@ -32,7 +32,7 @@ Pi command / project path
 
 ## Boundaries
 
-- ACP is the primary protocol for enqueueing.
+- Direct `.takt/tasks.yaml` plus `order.md` persistence is the enqueue boundary.
 - `takt-pi-next-step` is the pre-execution route navigator. Its internal phase
   Skills resolve intake, project setup, workflow selection, task planning,
   enqueue verification, and the final run-intent gate. Each phase has one
@@ -43,7 +43,7 @@ Pi command / project path
   excludes callable/internal workflows. Catalog failure is fail-closed.
 - `takt_enqueue_task` is the agent-facing queue seam. It accepts a finalized
   task body with one exact `workflow: <id>` directive, resolves an explicit
-  profile/project, and verifies the workflow reported by ACP after the pending
+  profile/project, and verifies the workflow after the pending
   task is written. A mismatch or missing report leaves the pending task in
   place as unverified and blocks execution. `takt-pi-orchestrator` owns
   selection; planner only clarifies/queues.
@@ -126,6 +126,6 @@ Pi command / project path
 - A run is not assumed to be singular; the summary is derived from all run
   records in the project when the optional diagnostic overlay is requested.
 
-The bridge does not import TAKT private modules. This keeps the package
-compatible with global TAKT installations and makes version drift visible at
-the public ACP/CLI boundary.
+The bridge does not import TAKT private modules. Its direct queue writer mirrors
+TAKT's public task-file shape, lock-file convention, and atomic replacement;
+execution remains on the public CLI boundary.

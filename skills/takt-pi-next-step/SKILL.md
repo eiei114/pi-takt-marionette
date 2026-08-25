@@ -46,7 +46,7 @@ or use `takt exec` as a shortcut for the queue/run path.
 | Fresh task has no locked workflow | `takt-pi-workflow-selection`; done means one exact catalog id is locked. |
 | Goal or acceptance is unclear | Planner clarification; do not enqueue. |
 | Task body ready but not confirmed | `takt-pi-queue-gate`; show the body and ask to enqueue. |
-| Confirmed body has no verified queue result | `takt-pi-queue-gate` → `takt_enqueue_task`; done means ACP workflow verification succeeds. |
+| Confirmed body has no verified queue result | `takt-pi-queue-gate` → `takt_enqueue_task`; done means direct workflow verification succeeds. |
 | Verified pending task, no run intent | `takt-pi-run-gate`; stop until explicit execution intent. |
 | User explicitly asks to run | `takt_run_pending`; done means the bridge-owned `takt run` PTY starts. |
 | Session is live or waiting for input | `takt_read_screen`, then runner follow-up or `takt_send_input` only when allowed. |
@@ -60,7 +60,7 @@ or use `takt exec` as a shortcut for the queue/run path.
   `default`.
 - Explicit `workflow: <id>` and resume workflows are locked. Planner and
   runner preserve them; they do not reselect.
-- Catalog failure, unknown/disabled workflow, or ACP mismatch is fail-closed.
+- Catalog failure, unknown/disabled workflow, or queue mismatch is fail-closed.
   Preserve the pending task, explain the blocker, and do not run it.
 - Queueing requires a finalized body plus user confirmation. Queueing never
   starts execution. Normal execution requires explicit user intent and

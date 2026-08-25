@@ -103,16 +103,15 @@ workflow requires an explicit split into another execution group.
 
 ## Current unchanged-TAKT execution policy
 
-This route deliberately uses the existing TAKT ACP contract. It does not send
-new task options and does not modify TAKT:
+This route writes TAKT's task files directly. It does not modify TAKT source:
 
 ```markdown
 workflow: <standalone workflow id>
 branch: takt/<spec-slug>
 ```
 
-The existing ACP enqueue path creates the managed worktree and does not create
-an automatic PR. Therefore the supported group policy is:
+The direct enqueue stores worktree task context and disables automatic PR
+creation. Therefore the supported group policy is:
 
 ```text
 worktree: true
@@ -126,7 +125,7 @@ will take effect, silently inherit defaults, or send unsupported
 
 ## Preflight contract
 
-Preflight must finish before the first ACP call:
+Preflight must finish before the direct persistence call:
 
 - PRD path exists and is the requested source.
 - Profile/cwd is explicit and resolves to the intended target.
@@ -141,7 +140,7 @@ Preflight must finish before the first ACP call:
 - Existing ledger entries have the same target, spec/group id, child-ticket
   set, aggregate hash, workflow, and branch before they can be skipped.
 
-Do not call ACP when any preflight check fails. Do not silently turn HITL into
+Do not write task files when any preflight check fails. Do not silently turn HITL into
 AFK or select a default workflow.
 
 ## Queue ledger shape
@@ -159,7 +158,7 @@ The ledger is Markdown so a human can inspect it without a special tool:
 
 ## Queue
 
-| Order | Spec/group | Child tickets | Branch | Workflow | Body SHA-256 | Result | ACP session |
+| Order | Spec/group | Child tickets | Branch | Workflow | Body SHA-256 | Result | Task name |
 |---:|---|---|---|---|---|---|---|
 | 1 | `fullscreen-focus` | `01, 02, 03` | `takt/fullscreen-focus` | `default` | `<hash>` | queued | `<id>` |
 ```
@@ -172,7 +171,7 @@ when only the pending aggregate task was queued.
 ## Rerun rules
 
 The ledger is a resume record, not an execution result. A matching queued row
-means only that ACP persisted one pending aggregate task; it does not mean
+means only that the queue writer persisted one pending aggregate task; it does not mean
 TAKT ran or completed it. If the spec/group, child-ticket set, aggregate body,
 workflow, branch, target profile, or target cwd changes, stop and require a new
 queue plan rather than risk duplicate work.

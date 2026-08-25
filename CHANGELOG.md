@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Replace ACP task enqueue with direct, lock-protected writes to
+  `.takt/tasks.yaml` and per-task `order.md`. The bridge preserves the exact
+  task body, stores workflow/branch/worktree metadata, verifies the persisted
+  pending record, and keeps execution behind the existing explicit run gate.
+
 ## 0.3.4 - 2026-08-24
 
 - Split the pre-execution TAKT route into dedicated internal Skills for intake,

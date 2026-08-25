@@ -47,12 +47,12 @@ spec's execution branch/worktree. It never starts TAKT execution.
    not expose callable/internal workflows or silently use a default. Ask the
    user to approve the child-ticket granularity, edges, types, and one workflow
    binding for the whole spec.
-5. Use the current TAKT ACP contract without modifying TAKT: the supported
+5. Use the bridge's direct TAKT task-file contract without modifying TAKT: the supported
    execution policy is `worktree: true` and `pr: none`. The aggregate task
    receives one explicit branch directive, `branch: takt/<spec-slug>`. Do not
    ask for or advertise per-ticket worktree/PR settings. If the user requests
    worktree=false or automatic regular/draft PR delivery, stop and report that
-   it is unsupported by the unchanged TAKT ACP; never silently downgrade it.
+   it is unsupported by the direct queue contract; never silently downgrade it.
 6. After approval, save child issues under `.scratch/<feature>/issues/NN-*.md`.
    AFK issues use `Status: ready-for-agent`; HITL issues use
    `Status: ready-for-human`. Each issue records the parent spec and execution
@@ -76,18 +76,17 @@ queueable AFK child is saved but not enqueued.
 3. Preflight the target/profile, the single workflow binding, the spec/group
    identity, aggregate body hash, duplicate ledger entry, and child-ticket
    order. A missing or invalid workflow, group identity, or unsupported
-   execution request fails closed before ACP.
+   execution request fails closed before direct persistence.
 4. Show one queue plan containing the spec, branch, workflow, and all child
    tickets. Ask for one explicit enqueue confirmation.
 5. After confirmation, call `takt_enqueue_task` exactly once for the aggregate
    body, with the existing tool contract (`profile` and `task` only). Require
-   ACP verification of the workflow. The `branch:` directive is an existing
-   TAKT task-context directive; preserve it in the ledger and do not claim
-   branch persistence when the target task state cannot be inspected. Do not
+   verification of the directly persisted workflow. The `branch:`
+   directive is stored as TAKT task context; preserve it in the ledger. Do not
    call `takt_run_pending`, `takt_exec_prompt`, or send `/go` separately.
 6. Write `.scratch/<feature>/takt-queue.md` with one spec/group row, its child
-   tickets, target, profile, branch, workflow, body hash, ACP session id, and
-   result.
+   tickets, target, profile, branch, workflow, body hash, task name, tasks file,
+   and result.
 
 ## Failure and retry
 
@@ -103,7 +102,7 @@ queueable AFK child is saved but not enqueued.
 ## Boundary
 
 `to-takt-tasks` owns decomposition, issue persistence, spec-group queue
-planning, and one ACP enqueue. `to-spec` owns the single spec. `takt-pi-runner`
+planning, and one direct enqueue. `to-spec` owns the single spec. `takt-pi-runner`
 owns execution and recovery. The generic `feature-development.yml` playbook
 remains target-agnostic; use the TAKT-specific playbook variant when this route
 is intended.

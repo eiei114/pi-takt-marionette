@@ -17,8 +17,8 @@ projects in stacked live widgets inside the Pi TUI.
 
 ## Status
 
-This is an early MVP. It deliberately uses TAKT's public `takt-acp` stdio
-interface for enqueueing and runs public TAKT CLI commands inside real PTYs.
+This is an early MVP. It writes TAKT pending task files directly for enqueueing
+and runs public TAKT CLI commands inside real PTYs.
 The live widget renders TAKT's terminal screen (including in-progress output,
 ANSI control sequences, and prompts) instead of reducing bridge-owned
 execution to a status widget. It clears automatically when the bridge-owned
@@ -31,7 +31,7 @@ compact `preparing` card. Final diagnostics remain available through
 ## Prerequisites
 
 - Pi 0.83 or later
-- TAKT 0.61 or later installed as the `takt` and `takt-acp` commands
+- TAKT 0.61 or later installed as the `takt` command
 - A configured TAKT provider/model
 - On macOS, `node-pty` may need Xcode Command Line Tools when a matching
   native prebuild is unavailable (`xcode-select --install`). Fresh installs
@@ -62,7 +62,7 @@ pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
 | `/takt:inspect` | Live session inspector: ↑/↓ pick a session, see its state, Enter peeks raw screen |
 | `/takt:flush [path]` | Send queued input lines to the running TAKT session |
 | `/takt:lang [en|ja]` | Switch widget language for this session (no argument toggles) |
-| `/takt:enqueue [path]` | Ask TAKT ACP to add a worktree task in a selected folder |
+| `/takt:enqueue [path]` | Directly add a worktree task in a selected folder |
 | `/takt:project [path]` | Register another repo/folder for detection and stacked display |
 | `/takt:project:init [profile]` | Create project-local `.takt` scaffolding and register a profile |
 | `/takt:project:remove [path]` | Stop watching a registered folder |
@@ -93,10 +93,11 @@ on every fresh route. Builtin enable/ignore settings are respected; callable
 and internal helpers are excluded. Catalog failure is fail-closed: no silent
 `default` fallback.
 
-The normal route is **workflow selection → Pi-side planning → ACP enqueue →
+The normal route is **workflow selection → Pi-side planning → direct task-file enqueue →
 explicit queue/run**. `takt_enqueue_task` requires the exact `workflow: <id>`
-line, then verifies the workflow reported by ACP. A mismatch or missing result
-leaves the pending task for inspection as unverified and blocks execution. The
+line, writes `.takt/tasks.yaml` and the task's `order.md`, then verifies the persisted
+workflow. A post-write verification failure leaves the pending task for
+inspection as unverified and blocks execution. The
 planner never runs a task. After the user explicitly asks to execute,
 `takt_run_pending` starts one bridge-owned PTY for all pending tasks through
 public `takt run`; `/takt:start` uses the same run-controller/widget lifecycle
@@ -195,14 +196,13 @@ instead of silently guessing a path.
 
 ## Configuration
 
-The bridge uses `takt-acp` and `takt` from `PATH`. Override the executable names
-when needed with `TAKT_ACP_COMMAND` and `TAKT_COMMAND`. Pi launched from a
+The bridge uses `takt` from `PATH`. Override the executable name
+when needed with `TAKT_COMMAND`. Pi launched from a
 macOS GUI, Finder, or a launch agent may not inherit Homebrew, nvm, Volta, or
 npm-global paths; use absolute command paths in that case, for example:
 
 ```text
 TAKT_COMMAND=/opt/homebrew/bin/takt
-TAKT_ACP_COMMAND=/opt/homebrew/bin/takt-acp
 ```
 
 No Pi provider setting is changed by this package.

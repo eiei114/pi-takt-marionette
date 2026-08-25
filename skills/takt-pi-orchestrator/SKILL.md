@@ -177,7 +177,7 @@ limitation instead of claiming that a PR will appear.
 ## Safety boundary
 
 - Queueing requires a finalized body, a selected workflow, and user
-  confirmation. `takt_enqueue_task` verifies the ACP-reported workflow before
+  confirmation. `takt_enqueue_task` writes the TAKT task files directly and verifies the persisted workflow before
   returning success; mismatch or missing result leaves the pending task in
   place as unverified and blocks execution.
 - Execution requires explicit intent to run; planning and enqueueing alone

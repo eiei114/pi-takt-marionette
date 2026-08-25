@@ -1,6 +1,6 @@
 ---
 name: takt-pi-task-planner
-description: Turn a vague request into one concrete TAKT pending task through a Pi-side planning conversation, then enqueue it through ACP without starting execution. Use after takt-pi-orchestrator routes a queue request or when the user explicitly invokes takt-pi-task-planner. Do not trigger as the front door for generic TAKT requests and do not use for immediate execution; use takt-pi-runner instead.
+description: Turn a vague request into one concrete TAKT pending task through a Pi-side planning conversation, then persist it directly without starting execution. Use after takt-pi-orchestrator routes a queue request or when the user explicitly invokes takt-pi-task-planner. Do not trigger as the front door for generic TAKT requests and do not use for immediate execution; use takt-pi-runner instead.
 ---
 
 # TAKT Pi Task Planner
@@ -33,10 +33,10 @@ skill creates **one pending task**; it does not start `takt run` or
 7. After confirmation, call `takt_enqueue_task` with the finalized body and
    named profile. Preserve the body exactly.
    The body must contain exactly one literal `workflow: <id>` line. The bridge
-   verifies ACP's persisted workflow; mismatch or missing workflow output is a
-   failed, unverified enqueue, but the pending task is intentionally preserved
-   for inspection and execution is blocked.
-8. Report the queued project, cwd, verified workflow, and session result; remind
+   verifies the directly persisted workflow. A post-write mismatch is a failed,
+   unverified enqueue; the pending task is intentionally preserved for
+   inspection and execution is blocked.
+8. Report the queued project, cwd, verified workflow, task name, and tasks file; remind
    the user that execution is still pending. Do not call `takt_exec_prompt` or
    `takt_run_pending` in this skill.
 
@@ -66,7 +66,7 @@ skill creates **one pending task**; it does not start `takt run` or
 ```
 
 The `workflow: <id>` line is mandatory under **Constraints**. Keep the exact
-selected standalone id so ACP enqueue and later `takt run` preserve it. Workflow
+selected standalone id so direct enqueue and later `takt run` preserve it. Workflow
 selection is locked for this task; changing it requires a new orchestrator
 selection, not a planner rewrite.
 

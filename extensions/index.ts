@@ -2,11 +2,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { matchesKey, Key, Text } from "@earendil-works/pi-tui";
 import {
-  TaktAcpClient,
+  TaktDirectQueueVerificationError,
+  TaktTaskQueue,
   extractWorkflowDirective,
-  type TaktEnqueueResult,
-  verifyEnqueueWorkflow,
-} from "../lib/takt-acp-client.ts";
+  type VerifiedTaktDirectEnqueueResult,
+} from "../lib/takt-task-queue.ts";
 import {
   cycleTaktInputMode,
   describeTaktInputMode,
@@ -225,7 +225,7 @@ const TAKT_READ_SCREEN_PARAMETERS = Type.Object({
 });
 
 type TaktBridgeStatus = Pick<TaktSummary, "status"> & Partial<Pick<TaktSummary, "pid" | "stage" | "lastExit">>;
-type TaktBridgeEnqueueResult = TaktEnqueueResult & {
+type TaktBridgeEnqueueResult = VerifiedTaktDirectEnqueueResult & {
   project: string;
   cwd: string;
   expectedWorkflow: string;
@@ -274,7 +274,7 @@ interface ManagedProject {
   id: string;
   cwd: string;
   label: string;
-  acp: TaktAcpClient;
+  enqueueClient: TaktTaskQueue;
   runner: TaktRunController;
   summary?: TaktSummary;
   stage: TaktExecStage;
@@ -585,18 +585,18 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
           `Workflow "${expectedWorkflow}" is not an enabled standalone workflow in the effective TAKT catalog; enqueue blocked`,
         );
       }
-      const acpResult = await project.acp.enqueue(task);
-      let result: ReturnType<typeof verifyEnqueueWorkflow>;
       try {
-        result = verifyEnqueueWorkflow(task, acpResult);
+        const result: VerifiedTaktDirectEnqueueResult = await project.enqueueClient.enqueue(task);
+        this.unverifiedQueueWorkflows.delete(project.id);
+        context.ui.notify(`TAKT task queued for ${project.label} (worktree run).`, "info");
+        await this.refreshProject(project, { includeTaskList: false });
+        return { project: project.label, cwd: project.cwd, ...result };
       } catch (error) {
-        this.unverifiedQueueWorkflows.set(project.id, errorMessage(error));
+        if (error instanceof TaktDirectQueueVerificationError) {
+          this.unverifiedQueueWorkflows.set(project.id, errorMessage(error));
+        }
         throw error;
       }
-      this.unverifiedQueueWorkflows.delete(project.id);
-      context.ui.notify(`TAKT task queued for ${project.label} (worktree run).`, "info");
-      await this.refreshProject(project, { includeTaskList: false });
-      return { project: project.label, cwd: project.cwd, ...result };
     } catch (error) {
       context.ui.notify(`TAKT enqueue failed: ${errorMessage(error)}`, "error");
       if (options.throwOnError) {
@@ -683,7 +683,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     const unverifiedWorkflow = this.unverifiedQueueWorkflows.get(project.id);
     if (unverifiedWorkflow) {
       throw new Error(
-        `TAKT pending execution is blocked for ${project.label} until the previous ACP workflow mismatch is resolved: ${unverifiedWorkflow}`,
+        `TAKT pending execution is blocked for ${project.label} until the previous queue workflow mismatch is resolved: ${unverifiedWorkflow}`,
       );
     }
     assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
@@ -1712,7 +1712,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       );
       return;
     }
-    await project.acp.close();
+    await project.enqueueClient.close();
     await project.runner.dispose();
     this.projects.delete(project.id);
     this.persistProjects();
@@ -1887,7 +1887,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
 
     const label = normalized.split(/[\\/]/).filter(Boolean).at(-1) ?? normalized;
-    const acp = new TaktAcpClient({ cwd: normalized });
+    const enqueueClient = new TaktTaskQueue({ cwd: normalized });
     const queuedInputs = createTaktInputQueue();
     const runner = new TaktRunController({
       cwd: normalized,
@@ -1920,7 +1920,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       id,
       cwd: normalized,
       label,
-      acp,
+      enqueueClient,
       runner,
       stage: "idle",
       queuedInputs,
@@ -2543,7 +2543,7 @@ function isTerminalRunStatus(status: TaktSummary["runs"][number]["status"]): boo
 async function shutdownManagedProject(project: ManagedProject): Promise<void> {
   const failures: unknown[] = [];
   try {
-    await project.acp.close();
+    await project.enqueueClient.close();
   } catch (error) {
     failures.push(error);
   }
@@ -3200,14 +3200,14 @@ export default function register(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "takt_enqueue_task",
     label: "TAKT Enqueue Task",
-    description: "Queue a confirmed task through TAKT ACP without starting execution.",
+    description: "Queue a confirmed task by directly writing TAKT's pending task files without starting execution.",
     promptSnippet: "Queue a finalized task in TAKT after Pi-side planning",
     promptGuidelines: [
       "Call only after the task body is finalized and the user has confirmed enqueueing.",
       "Use takt_project_setup first when the named profile or exact target project is not ready.",
       "This tool creates a pending task only; use takt_run_pending for explicit queue/run execution.",
       "Pass the exact task body unchanged. Do not silently shorten acceptance criteria or verification steps.",
-      "The task body must contain one exact workflow: <id> directive; ACP's persisted workflow is verified before success is returned.",
+      "The task body must contain one exact workflow: <id> directive; the directly persisted workflow is verified before success is returned.",
     ],
     parameters: TAKT_ENQUEUE_TASK_PARAMETERS,
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
@@ -3219,7 +3219,7 @@ export default function register(pi: ExtensionAPI): void {
       return {
         content: [{
           type: "text",
-          text: `TAKT task queued: ${result.project}\n${result.cwd}\nworkflow: ${result.workflow}\nverified: ${result.workflowVerified}\nstopReason: ${result.stopReason}`,
+          text: `TAKT task queued: ${result.project}\n${result.cwd}\nworkflow: ${result.workflow}\nverified: ${result.workflowVerified}\nstatus: ${result.status}\ntasksFile: ${result.tasksFile}\ntaskName: ${result.taskName}`,
         }],
         details: result,
       };
@@ -3566,7 +3566,7 @@ pi.registerCommand("takt:flush", {
   });
 
   pi.registerCommand("takt:enqueue", {
-    description: "Queue a TAKT task through ACP; pass a project path to target another folder",
+    description: "Queue a TAKT task directly; pass a project path to target another folder",
     handler: async (args, context) => {
       if (!context.hasUI || !runtime) {
         return;

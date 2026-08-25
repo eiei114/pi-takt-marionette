@@ -13,18 +13,18 @@ Normal implementation uses one explicit workflow contract:
    fail-closed; never silently choose `default`.
 4. Planner produces one task body with an exact `workflow: <id>` line and asks
    for confirmation.
-5. `takt_enqueue_task` sends `/go <task>` through `takt-acp` with
-   `defaultAction: "enqueue"`, then verifies ACP's persisted workflow. A
-   mismatch or missing workflow result preserves the pending task as
+5. `takt_enqueue_task` directly writes
+   `.takt/tasks.yaml` and the task's `order.md`, then verifies the persisted
+   workflow. A post-write verification failure preserves the pending task as
    unverified and blocks execution.
 6. After explicit user run intent, call `takt_run_pending` with the named
    profile. It starts public `takt run` for **all pending tasks** in the shared
    PTY/widget lifecycle. `/takt:start` does the same with interactive
    confirmation.
 
-The bridge does not write `.takt/tasks.yaml` itself. ACP is the control
-boundary for task creation. `takt exec` is separate instant/interactive mode,
-not the normal queue/run path.
+The bridge owns direct task-file persistence with TAKT-compatible locking and
+atomic replacement. `takt exec` is separate instant/interactive mode, not the
+normal queue/run path.
 
 For agent-driven work, start with the bundled `takt-pi-orchestrator` Skill. It
 asks the minimum TAKT target/intent/setup questions, then routes to
@@ -37,7 +37,7 @@ boundary. Its preflight phases are `takt-pi-intake`,
 through the final execution-intent decision. The planner discusses the goal,
 scope, non-goals, acceptance criteria, and validation in Pi, asks for
 confirmation, then calls `takt_enqueue_task`. The tool queues and verifies the
-finalized body through ACP and does not start execution. The runner handles
+finalized body directly and does not start execution. The runner handles
 explicit queue/run execution and recovery.
 
 ## Start and stop
@@ -106,7 +106,7 @@ The package includes `takt-pi-runner` and `to-takt-tasks`. In the
 `grill-with-docs → to-spec → to-takt-tasks` route, one Spec is one TAKT
 execution group: child tickets remain separate artifacts, but one aggregate
 task is enqueued on one branch/worktree. `to-takt-tasks` uses the unchanged
-TAKT ACP contract: managed worktree and no automatic PR. For normal
+direct queue contract: managed worktree and no automatic PR. For normal
 implementation, the runner preserves the orchestrator's locked
 `workflow: <id>` contract and calls
 `takt_run_pending` only after explicit user run intent. The tool resolves the
@@ -349,8 +349,7 @@ observations do not block the next bridge-owned exec; `live` and unresolved
 
 Pi started from Finder or a launch agent can have a shorter `PATH` than a
 Terminal session. If `takt` works in Terminal but Pi reports `ENOENT`, set
-absolute paths with `TAKT_COMMAND=/opt/homebrew/bin/takt` and
-`TAKT_ACP_COMMAND=/opt/homebrew/bin/takt-acp` (adjust for Intel Homebrew or a
+an absolute path with `TAKT_COMMAND=/opt/homebrew/bin/takt` (adjust for Intel Homebrew or a
 custom install). If `node-pty` has no matching native prebuild, install Xcode
 Command Line Tools with `xcode-select --install`.
 
