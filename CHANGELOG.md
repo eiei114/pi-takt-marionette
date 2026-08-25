@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.5 - 2026-08-26
 
 - Replace ACP task enqueue with direct, lock-protected writes to
   `.takt/tasks.yaml` and per-task `order.md`. The bridge preserves the exact
