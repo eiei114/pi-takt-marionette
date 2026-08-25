@@ -96,7 +96,7 @@ function createView(sessions, options = {}) {
 }
 
 test("pinned header keeps other-session count visible with long cwd paths", () => {
-  const longCwd = "C:\\Users\\Keisu\\AppData\\Local\\Temp\\pi-takt-focus-a-RPD8MJ\\alpha";
+  const longCwd = "C:\\Users\\Keisu\\AppData\\Local\\Temp\\pi-takt-focus-a-RPD8MJ\\sessions\\alpha-project-with-a-deliberately-long-name";
   const alpha = createFakeSession({ id: "a", label: "alpha", cwd: longCwd });
   const beta = createFakeSession({ id: "b", label: "beta", cwd: "C:/beta" });
   const { view } = createView([alpha, beta], { initialSessionId: "a" });
@@ -105,6 +105,8 @@ test("pinned header keeps other-session count visible with long cwd paths", () =
   const flat = view.render(120, 24).join("\n");
   assert.match(flat, /\+1 other running/);
   assert.match(flat, /alpha/);
+  assert.match(flat, /…/);
+  assert.match(flat, /input: takt/);
   for (const line of view.render(120, 24)) {
     assert.ok(line.length <= 120, `line too wide: ${line}`);
   }
