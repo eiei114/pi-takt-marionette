@@ -45,6 +45,7 @@ import {
   TaktRunController,
   terminalContainsText,
   terminalEndsWithText,
+  terminalLineContaining,
 } from "../lib/takt-run-controller.ts";
 import {
   setupProjectLocalTakt,
@@ -693,7 +694,9 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       throw new Error(`TAKT is already running in ${project.label}; use takt_read_screen or takt_stop first`);
     }
     if (!await this.refreshControlState(project)) {
-      throw new Error(`TAKT status check failed for ${project.label}`);
+      throw new Error(
+        `TAKT status check failed for ${project.label}${this.statusRefreshErrorMessage ? `: ${this.statusRefreshErrorMessage}` : ""}`,
+      );
     }
     if (blocksNewExecution(project.summary)) {
       await this.showLive(false);
@@ -1306,7 +1309,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       // Requeue is TAKT's default resume action. Send a literal Enter so no
       // bracketed-paste control bytes can leak into the selection UI.
       project.runner.write("\r");
-      await waitForFreshTerminalOutput(project.runner, menuVersion, signal, TAKT_RESUME_MENU_TIMEOUT_MS, "resume");
+      await waitForTaktResumeAccepted(project.runner, menuVersion, signal, TAKT_RESUME_MENU_TIMEOUT_MS);
       this.setProjectStage(project, "running", onUpdate, `TAKT resumed in ${project.label}.`);
       await this.setInputMode("pi-auto", { quiet: true });
       context.ui.notify(`TAKT resumed for ${project.label}. Input mode: pi-auto.`, "info");
@@ -1966,6 +1969,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       await this.refreshProject(project, { includeTaskList: true });
       return true;
     } catch (error) {
+      this.statusRefreshErrorMessage = errorMessage(error);
       this.context?.ui.notify(
         `TAKT status check failed for ${project.label}: ${errorMessage(error)}`,
         "error",
@@ -3036,6 +3040,47 @@ async function waitForTaktResumeMenu(
     await delay(50);
   }
   throw new Error(`takt resume did not show the Requeue menu within ${timeoutMs / 1_000} seconds`);
+}
+
+/**
+ * TAKT's resume UI selects its own target run. When that run references a
+ * workflow that no longer exists (e.g. a stale direct-run checkpoint),
+ * Requeue fails with `Workflow "..." not found for direct run "..."` and TAKT
+ * exits. The bridge must not report a successful resume in that case;
+ * surface the failure and the recovery hint instead (queued tasks are
+ * recovered by takt run, not by resume).
+ */
+async function waitForTaktResumeAccepted(
+  runner: TaktRunController,
+  previousScreenVersion: number,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    throwIfAborted(signal);
+    if (!runner.isRunning) {
+      const result = await runner.waitForExit();
+      const staleRunLine = terminalLineContaining(runner.terminal, "not found for direct run");
+      if (staleRunLine !== undefined) {
+        throw new Error(
+          `TAKT resume selected an invalid run: ${staleRunLine.trim()} — recover the queued task with takt run instead`,
+        );
+      }
+      throw new Error(`takt resume requeue failed (exit ${result?.code ?? "unknown"})`);
+    }
+    if (runner.screenVersion > previousScreenVersion) {
+      const staleRunLine = terminalLineContaining(runner.terminal, "not found for direct run");
+      if (staleRunLine !== undefined) {
+        throw new Error(
+          `TAKT resume selected an invalid run: ${staleRunLine.trim()} — recover the queued task with takt run instead`,
+        );
+      }
+      return;
+    }
+    await delay(50);
+  }
+  throw new Error(`takt resume did not acknowledge Requeue within ${timeoutMs / 1_000} seconds`);
 }
 
 async function waitForFreshTerminalOutput(

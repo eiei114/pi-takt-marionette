@@ -66,6 +66,28 @@ export function terminalContainsText(terminal: XtermTerminal | undefined, text: 
 }
 
 /**
+ * Return the first buffer line containing the text, or undefined when absent.
+ * Like {@link terminalContainsText}, this reads the parsed terminal buffer
+ * rather than the PTY process state.
+ */
+export function terminalLineContaining(
+  terminal: XtermTerminal | undefined,
+  text: string,
+): string | undefined {
+  if (!terminal || !text) {
+    return undefined;
+  }
+  const buffer = terminal.buffer.active;
+  for (let row = 0; row < buffer.length; row += 1) {
+    const line = buffer.getLine(row)?.translateToString(true);
+    if (line?.includes(text)) {
+      return line;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Check the last non-empty buffer line. Scrollback still contains the previous
  * prompt, so a contains-anywhere check must not satisfy post-submit readiness.
  */

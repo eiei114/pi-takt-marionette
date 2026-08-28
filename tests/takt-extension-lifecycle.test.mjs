@@ -117,7 +117,7 @@ function createTaktCommand(directory) {
     "  process.on(\"SIGINT\", () => { event(\"signal:resume\"); process.exit(130); });",
     "  process.stdout.write(\"Select action:\\r\\n> Requeue\\r\\n  Cancel\\r\\n\");",
     "  process.stdin.setEncoding(\"utf8\");",
-    "  process.stdin.once(\"data\", () => { event(\"resume:requeue\"); process.stdout.write(\"Resuming workflow…\\r\\n\"); });",
+    "  process.stdin.once(\"data\", () => { event(\"resume:requeue\"); if (process.env.TEST_RESUME_MODE === \"stale-run\") { process.stdout.write(\"[ERROR] Workflow \\\"exec-x\\\" not found for direct run \\\"20260817-x\\\"\\r\\n\"); setTimeout(() => process.exit(1), 30); } else { process.stdout.write(\"Resuming workflow…\\r\\n\"); } });",
     "} else {",
     "if (operation !== \"exec\") process.exit(2);",
     "event(`exec:${preset}`);",
@@ -167,6 +167,7 @@ function configureEnvironment(root, command, logPath, taskMode, listMode = "ok")
     ["TEST_OWNER_PID", process.env.TEST_OWNER_PID],
     ["TEST_CLEAR_MODE", process.env.TEST_CLEAR_MODE],
     ["TEST_PROMPT_DELAY_MS", process.env.TEST_PROMPT_DELAY_MS],
+    ["TEST_RESUME_MODE", process.env.TEST_RESUME_MODE],
   ]);
   process.env.APPDATA = root;
   process.env.XDG_CONFIG_HOME = root;
@@ -275,6 +276,32 @@ test("resume requeues a checkpoint with the requested Pi model and without clear
     assert.ok(lines.includes("resume:--provider|pi|--model|cursor/composer-2.5-fast|resume"));
     assert.ok(lines.includes("resume:requeue"));
     assert.equal(lines.includes("clear"), false);
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("resume fails fast when TAKT targets a stale run without a workflow", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-resume-stale-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  process.env.TEST_RESUME_MODE = "stale-run";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    await assert.rejects(
+      invoke(tools, "takt_resume_run", { profile: "pi-docs", provider: "pi" }, context),
+      /not found for direct run/,
+    );
+    const lines = logLines(logPath);
+    assert.ok(lines.includes("resume:--provider|pi|resume"));
+    assert.ok(lines.includes("resume:requeue"));
   } finally {
     await events.get("session_shutdown")?.({ reason: "quit" }, context);
     restoreEnvironment();
