@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 - 2026-08-29
+
+- **Width-aware name elision**: long project folder names, workflow names,
+  and step names in the live widget are now elided as `head…tail` instead of
+  being sliced off at the right edge. The elapsed timer (`⏱`) and completion
+  duration are always fully visible — the row reserves their width first and
+  only then shares the remaining space across names by priority
+  (label > workflow > step). CJK and wide emoji are measured by display
+  column, so rows stay inside the widget width.
+- The compact workflow widget elides task and step names under the same
+  budget rule.
+
 ## 0.4.0 - 2026-08-29
 
 - **Run outcome retention**: a finished TAKT run's `✅ 完了` / `🔴 ❌ 失敗`

@@ -611,3 +611,108 @@ test("active rows tick a live elapsed timer from run start", () => {
 
   assert.ok(lines.some((line) => line.includes("⏱ 04:32")));
 });
+
+test("elideMiddle keeps head…tail and stays inside the width budget", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  const name = "this-is-a-very-long-project-folder-name-that-would-overflow";
+
+  assert.equal(elideMiddle("short", 10), "short");
+  const elided = elideMiddle(name, 20);
+  assert.ok(elided.includes("…"), elided);
+  assert.ok(visibleWidth(elided) <= 20, `width ${visibleWidth(elided)} > 20`);
+  assert.ok(elided.startsWith("this-is"), elided);
+  assert.ok(elided.endsWith("overflow"), elided);
+  // Head and tail share the budget around the ellipsis.
+  assert.ok(visibleWidth(elided) >= 19, `wasted budget: ${visibleWidth(elided)}`);
+});
+
+test("elideMiddle is CJK-aware: wide characters count double", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  const name = "あいうえおかきくけこさしすせそたちつてと";
+  const elided = elideMiddle(name, 12);
+  assert.ok(visibleWidth(elided) <= 12, `width ${visibleWidth(elided)} > 12`);
+  assert.ok(elided.includes("…"), elided);
+});
+
+test("elideMiddle degrades gracefully on tiny budgets", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  assert.equal(elideMiddle("anything", 1), "…");
+  const two = elideMiddle("abcdefghij", 2);
+  assert.ok(visibleWidth(two) <= 2, two);
+});
+
+test("allocateNameWidths drops step first, then workflow, label last", async () => {
+  const { allocateNameWidths } = await import("../lib/takt-live-panel.ts");
+  const wide = allocateNameWidths(30, true, true, true);
+  assert.ok(wide.label >= wide.workflow && wide.workflow >= wide.step, String(wide));
+  assert.equal(wide.label + wide.workflow + wide.step, 30);
+  const tight = allocateNameWidths(9, true, true, true);
+  assert.equal(tight.step, 0, String(tight));
+  assert.ok(tight.label > 0, String(tight));
+  // The step slot is the last priority: unused leftover budget simply stays
+  // unused when the step is absent.
+  const noStep = allocateNameWidths(30, true, true, false);
+  assert.equal(noStep.step, 0);
+  assert.equal(noStep.label + noStep.workflow, 24, String(noStep));
+  // Dropping the top-priority label passes its budget to workflow and step.
+  const noLabel = allocateNameWidths(30, false, true, true);
+  assert.equal(noLabel.label, 0);
+  assert.equal(noLabel.workflow, 9, String(noLabel));
+  assert.equal(noLabel.step, 21, String(noLabel));
+});
+
+test("long names elide but the elapsed timer always stays fully visible", () => {
+  const now = Date.parse("2026-08-20T00:04:32.000Z");
+  const run = {
+    slug: "r",
+    task: "t",
+    workflow: "a-very-long-workflow-name-that-would-overflow-the-row",
+    status: "running",
+    sessionStatus: "live",
+    workflowSteps: ["implement-a-very-long-step-name-that-would-overflow"],
+    currentStep: "implement-a-very-long-step-name-that-would-overflow",
+    startTime: new Date(now - 272_000).toISOString(),
+  };
+  const label = "a-very-very-long-project-folder-name-that-would-overflow-the-row";
+  for (const width of [30, 40, 60, 80]) {
+    const lines = renderTaktProjectStack([{
+      id: "a",
+      label,
+      cwd: "C:/a",
+      runner: { terminal: undefined, hasSession: true, isRunning: true, resize() {} },
+      stage: "running",
+      summary: { cwd: "C:/a", status: "live", running: 1, pending: 0, blocked: 0,
+        failed: 0, completed: 0, stale: 0, runs: [run] },
+    }], width, "pi", { now });
+    const row = lines.at(-1) ?? "";
+    assert.ok(row.includes("⏱ 04:32"), `width ${width}: ${row}`);
+    assert.ok(row.includes("…"), `width ${width}: ${row}`);
+    assert.ok(visibleWidth(row) <= width, `width ${width}: ${visibleWidth(row)} > ${width}: ${row}`);
+  }
+});
+
+test("retained outcome row keeps its duration when the project name is huge", () => {
+  const now = Date.parse("2026-08-20T00:12:00.000Z");
+  const label = "some-absurdly-long-project-folder-name-that-would-overflow-any-row";
+  const lines = renderTaktProjectStack([{
+    id: "a",
+    label,
+    cwd: "C:/a",
+    runner: { terminal: undefined, hasSession: true, isRunning: false, resize() {} },
+    stage: "completed",
+    summary: {
+      cwd: "C:/a", status: "completed", running: 0, pending: 0, blocked: 0,
+      failed: 0, completed: 1, stale: 0,
+      runs: [{
+        slug: "r", task: "t", workflow: "w", status: "completed", sessionStatus: "completed",
+        startTime: new Date(now - 720_000).toISOString(),
+        endTime: new Date(now - 180_000).toISOString(),
+      }],
+    },
+  }], 44, "pi", { now });
+
+  const row = lines.at(-1) ?? "";
+  assert.ok(row.includes("· 9m"), row);
+  assert.ok(row.includes("…"), row);
+  assert.ok(visibleWidth(row) <= 44, `${visibleWidth(row)} > 44: ${row}`);
+});
