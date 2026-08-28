@@ -1,4 +1,5 @@
 import { renderTaktWorkflowProgress } from "./takt-progress.ts";
+import { elideMiddle } from "./takt-live-panel.ts";
 import { formatTaktLastExit, type TaktRunSnapshot, type TaktSummary } from "./takt-types.ts";
 
 const DEFAULT_WIDTH = 96;
@@ -70,9 +71,12 @@ export function renderTaktDetails(summary: TaktSummary): string[] {
 }
 
 function renderRunLine(run: TaktRunSnapshot, width: number): string {
-  const step = run.currentStep ? ` · ${run.currentStep}` : "";
   const prefix = `↳ ${run.sessionStatus}: `;
-  return prefix + truncate(`${run.task}${step}`, Math.max(24, width - prefix.length));
+  const stepWidth = run.currentStep ? Math.max(0, Math.round(width * 0.25)) : 0;
+  const taskWidth = Math.max(0, width - prefix.length - stepWidth);
+  const task = elideMiddle(run.task, taskWidth);
+  const stepText = run.currentStep ? ` · ${elideMiddle(run.currentStep, stepWidth)}` : "";
+  return `${prefix}${task}${stepText}`;
 }
 
 export function truncate(value: string, maxLength: number): string {

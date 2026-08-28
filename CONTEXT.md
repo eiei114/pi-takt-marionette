@@ -15,3 +15,7 @@ _Avoid_: 完了表示の永続化, outcome persistence
 **Session-owned widget** (セッション所有ウィジェット):
 The stacked project widget whose contents are owned by the Pi session that launched the TAKT process; external activity is excluded.
 _Avoid_: global status card
+
+**Name elision** (名前の省略):
+Width-aware `head…tail` shortening of long project labels, workflow names, and step names in live-widget rows, applied only after the row's fixed parts — status text and the elapsed/completion time — have been reserved. Names share the leftover width by priority: label > workflow > step.
+_Avoid_: 末尾のぶった切り, right-edge clipping
