@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.6 - 2026-08-28
 
 - `takt_resume_run` no longer reports a successful resume when TAKT picks a
   stale run whose workflow is missing (`Workflow "..." not found for direct

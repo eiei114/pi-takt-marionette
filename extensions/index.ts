@@ -3061,6 +3061,12 @@ async function waitForTaktResumeAccepted(
     throwIfAborted(signal);
     if (!runner.isRunning) {
       const result = await runner.waitForExit();
+      const staleRunLine = terminalLineContaining(runner.terminal, "not found for direct run");
+      if (staleRunLine !== undefined) {
+        throw new Error(
+          `TAKT resume selected an invalid run: ${staleRunLine.trim()} — recover the queued task with takt run instead`,
+        );
+      }
       throw new Error(`takt resume requeue failed (exit ${result?.code ?? "unknown"})`);
     }
     if (runner.screenVersion > previousScreenVersion) {
