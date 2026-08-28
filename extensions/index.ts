@@ -1956,19 +1956,28 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         if (!project || !context?.hasUI) {
           return;
         }
-        if (
-          project.stage !== "stopping" &&
-          project.stage !== "failed" &&
-          project.stage !== "stopped" &&
-          project.stage !== "completed"
-        ) {
+        // A manual stop (or an exit whose outcome was already settled by a
+        // status refresh) is not a run failure: no 🔴 outcome notification.
+        const settledBefore = project.stage === "stopping" ||
+          project.stage === "stopped" ||
+          project.stage === "failed" ||
+          project.stage === "completed";
+        if (!settledBefore) {
           this.setProjectStage(project, code === 0 ? "completed" : "failed");
         } else {
           this.notifyProjects();
         }
         project.execTracking = undefined;
-        const outcome = code === 0 ? "finished" : "exited with errors";
-        context.ui.notify(`TAKT ${project.label} ${outcome} (exit ${code}).`, code === 0 ? "info" : "error");
+        if (!settledBefore) {
+          // Run outcome notification: bridge-owned runs only, once per exit.
+          // Success gets a ✅ info; failure an 🔴 error.
+          context.ui.notify(
+            code === 0
+              ? `✅ TAKT ${project.label} finished.`
+              : `🔴 TAKT ${project.label} failed (exit ${code}).`,
+            code === 0 ? "info" : "error",
+          );
+        }
         if ((this.inputMode === "takt" || this.inputMode === "pi-auto") && !this.activeRunningProject()) {
           void this.setInputMode("pi", { quiet: true });
         }
@@ -2281,11 +2290,20 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   private hasDisplayableProject(): boolean {
     // Session-owned view only: externally started TAKT activity must not mount
     // or keep the live widget here. Explicit diagnostics (/takt:status,
-    // takt_read_screen) remain available for external runs.
-    return [...this.projects.values()].some((project) =>
-      !isTerminalProjectStage(project.stage) &&
-      (project.runner.isRunning || project.runner.hasSession),
-    );
+    // takt_read_screen) remain available for external runs. A retained run
+    // outcome (completed/failed) keeps the widget mounted; a stopped session
+    // never does.
+    return [...this.projects.values()].some((project) => {
+      if (project.stage === "stopped") {
+        return false;
+      }
+      return (
+        project.runner.isRunning ||
+        project.runner.hasSession ||
+        project.stage === "completed" ||
+        project.stage === "failed"
+      );
+    });
   }
 
   private activeRunningProject(): ManagedProject | undefined {

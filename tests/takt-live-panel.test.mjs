@@ -276,7 +276,7 @@ test("project stack hides observed pending activity entirely; use /takt:status i
   assert.ok(lines.some((line) => line.includes("no active sessions")));
 });
 
-test("project stack hides bridge sessions after stop, failure, or natural completion", () => {
+test("project stack retains run outcomes: stopped hides, completed and failed stay", () => {
   const runner = {
     terminal: undefined,
     hasSession: true,
@@ -284,13 +284,116 @@ test("project stack hides bridge sessions after stop, failure, or natural comple
     resize() {},
   };
 
-  for (const stage of ["stopped", "failed", "completed"]) {
-    const lines = renderTaktProjectStack([
-      { id: "finished", label: "finished", cwd: "C:/finished", runner, stage },
-    ], 40);
-    assert.ok(lines.every((line) => !line.includes("[finished]")));
-    assert.ok(lines.some((line) => line.includes("no active sessions")));
-  }
+  // A manually stopped session is never rendered as success.
+  const stopped = renderTaktProjectStack([
+    { id: "finished", label: "finished", cwd: "C:/finished", runner, stage: "stopped" },
+  ], 40);
+  assert.ok(stopped.every((line) => !line.includes("[finished]")));
+  assert.ok(stopped.some((line) => line.includes("no active sessions")));
+
+  // A finished run stays visible as a ✅ outcome row until the next run.
+  const completed = renderTaktProjectStack([
+    { id: "done", label: "done", cwd: "C:/done", runner, stage: "completed",
+      summary: {
+        cwd: "C:/done", status: "completed", running: 0, pending: 0, blocked: 0,
+        failed: 0, completed: 1, stale: 0,
+        runs: [{ slug: "r1", task: "t", workflow: "w", status: "completed", sessionStatus: "completed" }],
+      } },
+  ], 60);
+  assert.ok(completed.some((line) => line.includes("✅ done")), String(completed));
+  assert.ok(completed.every((line) => !line.includes("no active sessions")));
+
+  // A failed run stays visible as a conclusion-only 🔴 row (no reason detail).
+  const failed = renderTaktProjectStack([
+    { id: "bad", label: "bad", cwd: "C:/bad", runner, stage: "failed",
+      summary: {
+        cwd: "C:/bad", status: "failed", running: 0, pending: 0, blocked: 0,
+        failed: 1, completed: 0, stale: 0,
+        runs: [{ slug: "r2", task: "t", workflow: "w", status: "failed", sessionStatus: "completed",
+          failure: "some long failure reason that must stay out of the row" }],
+      } },
+  ], 80);
+  assert.ok(failed.some((line) => line.includes("🔴 bad") && line.includes("❌")), String(failed));
+  assert.ok(failed.every((line) => !line.includes("failure reason")), String(failed));
+});
+
+test("project stack shows the completion duration on the retained success row", () => {
+  const now = Date.parse("2026-08-20T00:12:00.000Z");
+  const lines = renderTaktProjectStack([{
+    id: "finished",
+    label: "finished",
+    cwd: "C:/finished",
+    runner: { terminal: undefined, hasSession: true, isRunning: false, resize() {} },
+    stage: "completed",
+    summary: {
+      cwd: "C:/finished",
+      status: "completed",
+      running: 0, pending: 0, blocked: 0, failed: 0, completed: 1, stale: 0,
+      runs: [{
+        slug: "finished-run", task: "finished task", workflow: "default",
+        status: "completed", sessionStatus: "completed",
+        startTime: new Date(now - 720_000).toISOString(),
+        endTime: new Date(now - 180_000).toISOString(),
+      }],
+    },
+  }], 80, "pi", { now });
+
+  assert.ok(lines.some((line) => line.includes("✅ finished") && line.includes("9m")), String(lines));
+});
+
+test("project stack keeps multiple retained outcome rows, newest first", () => {
+  const runner = {
+    terminal: undefined,
+    hasSession: true,
+    isRunning: false,
+    resize() {},
+  };
+  const makeSummary = (endTime) => ({
+    cwd: "C:/p", status: "completed", running: 0, pending: 0, blocked: 0,
+    failed: 0, completed: 1, stale: 0,
+    runs: [{ slug: "r", task: "t", workflow: "w", status: "completed",
+      sessionStatus: "completed", endTime }],
+  });
+  const lines = renderTaktProjectStack([
+    { id: "older", label: "older", cwd: "C:/older", runner, stage: "completed",
+      summary: makeSummary("2026-08-20T00:10:00.000Z") },
+    { id: "newer", label: "newer", cwd: "C:/newer", runner, stage: "completed",
+      summary: makeSummary("2026-08-20T00:20:00.000Z") },
+  ], 60);
+
+  assert.ok(lines.some((line) => line.includes("✅ older")), String(lines));
+  assert.ok(lines.some((line) => line.includes("✅ newer")), String(lines));
+  const newerIndex = lines.findIndex((line) => line.includes("✅ newer"));
+  const olderIndex = lines.findIndex((line) => line.includes("✅ older"));
+  assert.ok(newerIndex >= 0 && olderIndex >= 0);
+  assert.ok(newerIndex < olderIndex, `expected newer outcome above older: ${String(lines)}`);
+});
+
+test("project stack replaces the retained outcome row once the next run starts", () => {
+  const runner = {
+    terminal: undefined,
+    hasSession: true,
+    isRunning: true,
+    resize() {},
+  };
+  const lines = renderTaktProjectStack([{
+    id: "again",
+    label: "again",
+    cwd: "C:/again",
+    runner,
+    stage: "running",
+    summary: {
+      cwd: "C:/again", status: "live", running: 1, pending: 0, blocked: 0,
+      failed: 0, completed: 1, stale: 0,
+      runs: [{
+        slug: "next", task: "t", workflow: "w",
+        status: "running", sessionStatus: "live", currentStep: "plan",
+      }],
+    },
+  }], 60, "pi", { now: Date.parse("2026-08-20T00:00:00.000Z") });
+
+  assert.ok(lines.some((line) => line.includes("🟢 again")), String(lines));
+  assert.ok(lines.every((line) => !line.includes("✅ again")), String(lines));
 });
 
 test("project stack keeps a live PTY when only a historical run is completed", () => {
