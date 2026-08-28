@@ -16,7 +16,8 @@ start TAKT during intake.
 2. **Intent** — setup, ask for the next action, plan and queue, run pending,
    inspect, stop, or recover a checkpoint.
 3. **Constraints** — preset/profile, provider/model, Pi-only requirement,
-   worktree expectation, and allowed delivery side effects.
+   explicit per-task worktree choice, PR mode (`none`, `regular`, or `draft`),
+   and allowed delivery side effects. Do not infer an unset policy.
 4. **Task contract** — goal, scope, non-goals, acceptance criteria, and
    validation evidence when the request creates work.
 

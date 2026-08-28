@@ -23,6 +23,7 @@ skill creates **one pending task**; it does not start `takt run` or
    - acceptance criteria
    - validation commands or evidence
    - provider/agent constraints, if any
+   - per-task worktree choice and PR mode (`none`, `regular`, or `draft`)
 4. Require a workflow directive from the orchestrator before presenting the
    final body. If it is missing, return to `takt-pi-orchestrator`; planner is
    not a workflow-selection owner and must not choose `default`.
@@ -30,13 +31,15 @@ skill creates **one pending task**; it does not start `takt run` or
    before enqueueing. Do not silently turn an idea into a task.
 6. If the target profile or project-local TAKT setup is missing, call
    `takt_project_setup` with the exact target cwd first.
-7. After confirmation, call `takt_enqueue_task` with the finalized body and
-   named profile. Preserve the body exactly.
+7. After confirmation, call `takt_enqueue_task` with the finalized body, named
+   profile, and the selected `worktree` / `prMode` values. Preserve the body
+   exactly. Require the bridge to verify the persisted execution settings.
    The body must contain exactly one literal `workflow: <id>` line. The bridge
-   verifies the directly persisted workflow. A post-write mismatch is a failed,
-   unverified enqueue; the pending task is intentionally preserved for
-   inspection and execution is blocked.
-8. Report the queued project, cwd, verified workflow, task name, and tasks file; remind
+   verifies the directly persisted workflow. A post-write workflow or execution
+   policy mismatch is a failed, unverified enqueue; the pending task is
+   intentionally preserved for inspection and execution is blocked.
+8. Report the queued project, cwd, verified workflow, execution policy, task name,
+   and tasks file; remind
    the user that execution is still pending. Do not call `takt_exec_prompt` or
    `takt_run_pending` in this skill.
 
@@ -62,8 +65,13 @@ skill creates **one pending task**; it does not start `takt run` or
 
 ## Constraints
 - workflow: <selected standalone workflow id>
+- worktree: true|false
+- pr: none|regular|draft
 - <provider, safety, rollout, or other explicit constraint>
 ```
+
+`regular`/`draft` requires `worktree: true`; `worktree: false` only permits
+`pr: none`. Missing or ambiguous choices fail closed.
 
 The `workflow: <id>` line is mandatory under **Constraints**. Keep the exact
 selected standalone id so direct enqueue and later `takt run` preserve it. Workflow

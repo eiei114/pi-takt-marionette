@@ -47,12 +47,12 @@ spec's execution branch/worktree. It never starts TAKT execution.
    not expose callable/internal workflows or silently use a default. Ask the
    user to approve the child-ticket granularity, edges, types, and one workflow
    binding for the whole spec.
-5. Use the bridge's direct TAKT task-file contract without modifying TAKT: the supported
-   execution policy is `worktree: true` and `pr: none`. The aggregate task
-   receives one explicit branch directive, `branch: takt/<spec-slug>`. Do not
-   ask for or advertise per-ticket worktree/PR settings. If the user requests
-   worktree=false or automatic regular/draft PR delivery, stop and report that
-   it is unsupported by the direct queue contract; never silently downgrade it.
+5. Resolve one explicit execution policy for the spec execution group. Present
+   `worktree: true|false` and PR mode `none|regular|draft` as choices. A
+   regular or draft PR requires `worktree: true`. Never inherit a project
+   default or choose between modes when the user has not selected one; missing
+   or ambiguous policy fails closed. The aggregate task receives one explicit
+   branch directive, `branch: takt/<spec-slug>`.
 6. After approval, save child issues under `.scratch/<feature>/issues/NN-*.md`.
    AFK issues use `Status: ready-for-agent`; HITL issues use
    `Status: ready-for-human`. Each issue records the parent spec and execution
@@ -73,17 +73,19 @@ queueable AFK child is saved but not enqueued.
    and source reference; omit YAML frontmatter, Status, and Comments. Add the
    exact group directives at the top:
    `workflow: <id>` and `branch: takt/<spec-slug>`.
-3. Preflight the target/profile, the single workflow binding, the spec/group
-   identity, aggregate body hash, duplicate ledger entry, and child-ticket
-   order. A missing or invalid workflow, group identity, or unsupported
-   execution request fails closed before direct persistence.
-4. Show one queue plan containing the spec, branch, workflow, and all child
-   tickets. Ask for one explicit enqueue confirmation.
+3. Preflight the target/profile, the single workflow binding, the selected
+   execution policy, the spec/group identity, aggregate body hash, duplicate
+   ledger entry, and child-ticket order. A missing or invalid workflow, group
+   identity, policy, or execution request fails closed before direct
+   persistence.
+4. Show one queue plan containing the spec, branch, workflow, execution policy,
+   and all child tickets. Ask for one explicit enqueue confirmation.
 5. After confirmation, call `takt_enqueue_task` exactly once for the aggregate
-   body, with the existing tool contract (`profile` and `task` only). Require
-   verification of the directly persisted workflow. The `branch:`
-   directive is stored as TAKT task context; preserve it in the ledger. Do not
-   call `takt_run_pending`, `takt_exec_prompt`, or send `/go` separately.
+   body, passing the named profile plus the selected `worktree` and `prMode`.
+   Require verification of the directly persisted workflow and execution
+   policy. The `branch:` directive is stored as TAKT task context; preserve it
+   in the ledger. Do not call `takt_run_pending`, `takt_exec_prompt`, or send
+   `/go` separately.
 6. Write `.scratch/<feature>/takt-queue.md` with one spec/group row, its child
    tickets, target, profile, branch, workflow, body hash, task name, tasks file,
    and result.
@@ -94,7 +96,8 @@ queueable AFK child is saved but not enqueued.
   TAKT rollback. Record the spec/group, child tickets, and failure in the
   ledger.
 - A later invocation resumes only when target, spec/group identity, aggregate
-  body hash, workflow, branch, and child-ticket set match the ledger. A
+  body hash, workflow, branch, execution policy, and child-ticket set match the
+  ledger. A
   matching `queued` group is skipped; mismatches stop.
 - Queueing is not execution. Report pending state and leave running to the
   explicit TAKT runner/run gate.

@@ -15,7 +15,7 @@ Pi command / project path
         │       │
         │       ├── intake → project-setup → workflow-selection
         │       ├── planner → queue-gate ── exact `workflow: <id>` task contract
-        │       ├── takt_enqueue_task ── direct task-file enqueue + verify workflow
+        │       ├── takt_enqueue_task ── direct task-file enqueue + verify workflow/policy
         │       └── run-gate ── explicit all-pending queue/run intent → runner
         │
         ├── takt_exec_prompt tool ── reconcile → stop → clear → exec → prompt → auto `/go` or manual `awaiting_go`
@@ -42,11 +42,12 @@ Pi command / project path
   settings, deduplicates names, exposes categories/source/description, and
   excludes callable/internal workflows. Catalog failure is fail-closed.
 - `takt_enqueue_task` is the agent-facing queue seam. It accepts a finalized
-  task body with one exact `workflow: <id>` directive, resolves an explicit
-  profile/project, and verifies the workflow after the pending
-  task is written. A mismatch or missing report leaves the pending task in
-  place as unverified and blocks execution. `takt-pi-orchestrator` owns
-  selection; planner only clarifies/queues.
+  task body with one exact `workflow: <id>` directive, an explicit per-task
+  worktree choice, and PR mode (`none`, `regular`, or `draft`). It resolves an
+  explicit profile/project and verifies the workflow plus persisted
+  `worktree`/`auto_pr`/`draft_pr` fields after writing the pending task. A
+  mismatch or missing report leaves the task unverified and blocks execution.
+  `takt-pi-orchestrator` owns selection; planner only clarifies/queues.
 - `takt_run_pending` is the agent-facing execution seam. It requires explicit
   run intent and shares the `/takt:start` run-controller/PTY/widget lifecycle;
   it starts public `takt run` for all pending tasks. `takt_exec_prompt` remains

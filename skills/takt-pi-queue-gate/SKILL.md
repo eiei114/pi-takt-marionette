@@ -13,6 +13,8 @@ This phase ends before execution.
 
 - Exact profile and target are known.
 - One locked standalone workflow exists.
+- One explicit worktree choice and PR mode exist; regular/draft PR requires
+  `worktree: true`.
 - The body contains exactly one literal `workflow: <id>` line.
 - Goal, scope, non-goals, acceptance criteria, and validation are explicit.
 
@@ -20,15 +22,18 @@ This phase ends before execution.
 
 1. Present the final body unchanged. Ask whether to enqueue; do not infer
    approval from a planning discussion.
-2. After confirmation, call `takt_enqueue_task` with the exact profile and body.
-3. Require direct persisted-task workflow verification. A post-write mismatch
-   is a failed enqueue with the pending task preserved and execution blocked.
-4. Report project, cwd, exact workflow, and verified pending status.
+2. After confirmation, call `takt_enqueue_task` with the exact profile, body,
+   `worktree`, and `prMode` selections.
+3. Require direct persisted-task workflow and execution-policy verification. A
+   post-write mismatch is a failed enqueue with the pending task preserved and
+   execution blocked.
+4. Report project, cwd, exact workflow, execution policy, and verified pending
+   status.
 
 ## Done condition
 
-The direct queue writer persisted the same workflow id as the task directive
-and the task is pending.
+The direct queue writer persisted the same workflow id and execution policy as
+the task contract, and the task is pending.
 Hand off to `takt-pi-run-gate`; never call the runner automatically.
 
 ## Boundary

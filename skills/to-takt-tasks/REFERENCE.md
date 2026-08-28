@@ -101,27 +101,32 @@ The workflow is selected once for the spec execution group. Child tickets do
 not silently select different workflows. A ticket that needs a different
 workflow requires an explicit split into another execution group.
 
-## Current unchanged-TAKT execution policy
+## Explicit TAKT execution policy
 
-This route writes TAKT's task files directly. It does not modify TAKT source:
+This route writes TAKT's task files directly. It does not modify TAKT source.
+The execution policy is selected once for the spec execution group and passed
+to the bridge explicitly:
 
 ```markdown
 workflow: <standalone workflow id>
 branch: takt/<spec-slug>
 ```
 
-The direct enqueue stores worktree task context and disables automatic PR
-creation. Therefore the supported group policy is:
+The bridge accepts these exact policy choices:
 
-```text
-worktree: true
-pr: none
+| Worktree | PR mode | Persisted task fields |
+|---|---|---|
+| `true` | `none` | `worktree: true`, `auto_pr: false`, `draft_pr: false` |
+| `true` | `regular` | `worktree: true`, `auto_pr: true`, `draft_pr: false` |
+| `true` | `draft` | `worktree: true`, `auto_pr: true`, `draft_pr: true` |
+| `false` | `none` | `worktree: false`, `auto_pr: false`, `draft_pr: false` |
 ```
 
-`worktree: false`, regular PR, and Draft PR are unsupported in this no-TAKT-
-change route. Stop and report those requests; never display them as if they
-will take effect, silently inherit defaults, or send unsupported
-`taskOptions`.
+Regular and draft PR modes require `worktree: true`. The policy is required at
+the queue seam; missing, malformed, or incompatible values fail closed. Never
+silently inherit project defaults or choose `none` when regular/draft was not
+confirmed. The persisted task fields are verified before queue success is
+reported.
 
 ## Preflight contract
 
@@ -138,7 +143,8 @@ Preflight must finish before the direct persistence call:
 - The aggregate child-ticket order is a deterministic topological order;
   numeric filename order breaks ties.
 - Existing ledger entries have the same target, spec/group id, child-ticket
-  set, aggregate hash, workflow, and branch before they can be skipped.
+  set, aggregate hash, workflow, branch, and execution policy before they can
+  be skipped.
 
 Do not write task files when any preflight check fails. Do not silently turn HITL into
 AFK or select a default workflow.

@@ -11,12 +11,12 @@ Normal implementation uses one explicit workflow contract:
 3. Always show/select one workflow for a fresh route. Explicit workflow
    directives and resume workflows are displayed as locked. Catalog failure is
    fail-closed; never silently choose `default`.
-4. Planner produces one task body with an exact `workflow: <id>` line and asks
-   for confirmation.
+4. Planner produces one task body with an exact `workflow: <id>` line, resolves
+   explicit per-task `worktree` and PR mode choices, and asks for confirmation.
 5. `takt_enqueue_task` directly writes
    `.takt/tasks.yaml` and the task's `order.md`, then verifies the persisted
-   workflow. A post-write verification failure preserves the pending task as
-   unverified and blocks execution.
+   workflow and delivery fields. A post-write verification failure preserves
+   the pending task as unverified and blocks execution.
 6. After explicit user run intent, call `takt_run_pending` with the named
    profile. It starts public `takt run` for **all pending tasks** in the shared
    PTY/widget lifecycle. `/takt:start` does the same with interactive
@@ -105,8 +105,10 @@ explicit alias form.
 The package includes `takt-pi-runner` and `to-takt-tasks`. In the
 `grill-with-docs → to-spec → to-takt-tasks` route, one Spec is one TAKT
 execution group: child tickets remain separate artifacts, but one aggregate
-task is enqueued on one branch/worktree. `to-takt-tasks` uses the unchanged
-direct queue contract: managed worktree and no automatic PR. For normal
+task is enqueued on one branch/worktree. `to-takt-tasks` requires an explicit
+per-task worktree choice and PR mode (`none`, `regular`, or `draft`); regular
+and draft PRs require an isolated worktree. The bridge persists and verifies
+the selected `auto_pr` / `draft_pr` fields. For normal
 implementation, the runner preserves the orchestrator's locked
 `workflow: <id>` contract and calls
 `takt_run_pending` only after explicit user run intent. The tool resolves the
