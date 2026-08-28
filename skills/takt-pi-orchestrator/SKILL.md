@@ -21,9 +21,12 @@ the current Pi project, an explicit path, or a named profile:
    path or silently search for a similarly named repository.
 2. **Intent** — setup only, ask for the next action, discuss and queue a pending
    task, execute now, or inspect/recover an existing session.
-3. **Execution policy** — preset/profile, Pi-only provider constraint, worktree
-   expectation, workflow/provider lane, and whether external side effects are
-   allowed. Workflow selection is required for every fresh route. It is not a
+3. **Execution policy** — preset/profile, Pi-only provider constraint, explicit
+   per-task worktree choice, PR mode (`none`, `regular`, or `draft`),
+   workflow/provider lane, and whether external side effects are allowed.
+   Worktree and PR mode must be selected for every fresh task; never inherit a
+   project default or choose an unset mode. Workflow selection is required for
+   every fresh route. It is not a
    reason to substitute the global Pi default; follow **Workflow selection**
    below before planning or execution.
 4. **Task contract** — goal, scope, non-goals, acceptance criteria, and
@@ -170,9 +173,11 @@ If the user asks for a commit, push, or pull request, keep that request in the
 task contract and verify it at the end; do not infer delivery side effects from
 a branch name. Before claiming completion, confirm terminal workflow status,
 validation evidence, changed files, and the actual commit/remote/PR result.
-`auto_pr: true` means a regular PR; `draft_pr: true` means a draft. If the
-available bridge tool cannot set the requested delivery option, report that
-limitation instead of claiming that a PR will appear.
+`auto_pr: true` with `draft_pr: false` means a regular PR; both true means a
+draft PR; both false means no PR. The bridge must receive the selected policy
+and verify the persisted task fields. If the requested policy is missing,
+invalid, or cannot be verified, stop instead of inheriting a default or
+claiming that a PR will appear.
 
 ## Safety boundary
 

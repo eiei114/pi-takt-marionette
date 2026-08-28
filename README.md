@@ -64,7 +64,7 @@ pi -e .
 | `/takt:inspect` | Live session inspector: ↑/↓ pick a session, see its state, Enter peeks raw screen |
 | `/takt:flush [path]` | Send queued input lines to the running TAKT session |
 | `/takt:lang [en|ja]` | Switch widget language for this session (no argument toggles) |
-| `/takt:enqueue [path]` | Directly add a worktree task in a selected folder |
+| `/takt:enqueue [path]` | Add a task after choosing worktree and PR delivery mode |
 | `/takt:project [path]` | Register another repo/folder for detection and stacked display |
 | `/takt:project:init [profile]` | Create project-local `.takt` scaffolding and register a profile |
 | `/takt:project:remove [path]` | Stop watching a registered folder |
@@ -97,9 +97,10 @@ and internal helpers are excluded. Catalog failure is fail-closed: no silent
 
 The normal route is **workflow selection → Pi-side planning → direct task-file enqueue →
 explicit queue/run**. `takt_enqueue_task` requires the exact `workflow: <id>`
-line, writes `.takt/tasks.yaml` and the task's `order.md`, then verifies the persisted
-workflow. A post-write verification failure leaves the pending task for
-inspection as unverified and blocks execution. The
+line plus explicit `worktree` and PR mode (`none`, `regular`, or `draft`)
+choices. It writes `.takt/tasks.yaml` and the task's `order.md`, then verifies
+the persisted workflow and delivery fields. A post-write verification failure
+leaves the pending task for inspection as unverified and blocks execution. The
 planner never runs a task. After the user explicitly asks to execute,
 `takt_run_pending` starts one bridge-owned PTY for all pending tasks through
 public `takt run`; `/takt:start` uses the same run-controller/widget lifecycle

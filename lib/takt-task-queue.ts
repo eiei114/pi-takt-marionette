@@ -13,6 +13,12 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+  assertValidTaktTaskExecutionPolicy,
+  toTaktTaskFileOptions,
+  type TaktTaskExecutionPolicy,
+  type TaktTaskFileOptions,
+} from "./takt-task-policy.ts";
 
 const LOCK_RETRY_DELAY_MS = 25;
 const LOCK_TIMEOUT_MS = 5_000;
@@ -30,6 +36,9 @@ export interface VerifiedTaktDirectEnqueueResult {
   expectedWorkflow: string;
   workflowVerified: true;
   status: "pending";
+  executionOptions: TaktTaskFileOptions;
+  expectedExecutionOptions: TaktTaskFileOptions;
+  executionOptionsVerified: true;
   branch?: string;
   taskDir: string;
 }
@@ -42,8 +51,9 @@ export class TaktDirectQueueVerificationError extends Error {
 }
 
 interface PendingTaskRecord extends Record<string, unknown> {
-  worktree: true;
-  auto_pr: false;
+  worktree: boolean;
+  auto_pr: boolean;
+  draft_pr: boolean;
   name: string;
   status: "pending";
   slug: string;
@@ -74,7 +84,9 @@ export class TaktTaskQueue {
     this.cwd = options.cwd;
   }
 
-  async enqueue(task: string): Promise<VerifiedTaktDirectEnqueueResult> {
+  async enqueue(task: string, policy: TaktTaskExecutionPolicy): Promise<VerifiedTaktDirectEnqueueResult> {
+    assertValidTaktTaskExecutionPolicy(policy);
+    const executionOptions = toTaktTaskFileOptions(policy);
     if (!task.trim()) {
       throw new Error("TAKT task must not be empty");
     }
@@ -101,8 +113,9 @@ export class TaktTaskQueue {
         assertNoActiveBranchConflict(state.tasks, branch);
         const name = uniqueName(slug, state.tasks);
         const record: PendingTaskRecord = {
-          worktree: true,
-          auto_pr: false,
+          worktree: executionOptions.worktree,
+          auto_pr: executionOptions.autoPr,
+          draft_pr: executionOptions.draftPr,
           name,
           status: "pending",
           slug,
@@ -120,10 +133,13 @@ export class TaktTaskQueue {
         const saved = readTaskState(tasksFile).tasks.at(-1);
         if (!isRecord(saved)
           || saved.name !== name
-          || saved.status !== "pending"
-          || saved.workflow !== workflow
-          || saved.task_dir !== reserved.relative
-          || (branch !== undefined && saved.branch !== branch)) {
+            || saved.status !== "pending"
+            || saved.workflow !== workflow
+            || saved.task_dir !== reserved.relative
+            || saved.worktree !== executionOptions.worktree
+            || saved.auto_pr !== executionOptions.autoPr
+            || saved.draft_pr !== executionOptions.draftPr
+            || (branch !== undefined && saved.branch !== branch)) {
           throw new TaktDirectQueueVerificationError(
             "Direct TAKT queue verification failed after writing tasks.yaml; the pending task was preserved and execution is blocked",
           );
@@ -137,6 +153,9 @@ export class TaktTaskQueue {
         expectedWorkflow: workflow,
         workflowVerified: true,
         status: "pending",
+        executionOptions,
+        expectedExecutionOptions: executionOptions,
+        executionOptionsVerified: true,
         ...(branch ? { branch } : {}),
         taskDir: reserved.relative,
       };

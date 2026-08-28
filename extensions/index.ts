@@ -8,6 +8,11 @@ import {
   type VerifiedTaktDirectEnqueueResult,
 } from "../lib/takt-task-queue.ts";
 import {
+  formatTaktTaskExecutionPolicy,
+  type TaktPrMode,
+  type TaktTaskExecutionPolicy,
+} from "../lib/takt-task-policy.ts";
+import {
   cycleTaktInputMode,
   describeTaktInputMode,
   formatTaktInputModeLine,
@@ -173,6 +178,14 @@ const TAKT_ENQUEUE_TASK_PARAMETERS = Type.Object({
     description: "Named TAKT profile or exact project path; defaults to pi-docs",
   })),
   task: Type.String({ description: "Exact ready-to-run task body to queue; this does not start execution" }),
+  worktree: Type.Boolean({
+    description: "Whether TAKT creates an isolated worktree for this task; choose every time",
+  }),
+  prMode: Type.Union([
+    Type.Literal("none"),
+    Type.Literal("regular"),
+    Type.Literal("draft"),
+  ], { description: "Per-task delivery: no PR, regular PR, or draft PR; choose every time" }),
 });
 
 const TAKT_WORKFLOW_CATALOG_PARAMETERS = Type.Object({
@@ -487,6 +500,10 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (!project) {
       return undefined;
     }
+    const executionPolicy = await this.selectTaskExecutionPolicy(project);
+    if (!executionPolicy) {
+      return undefined;
+    }
     let selectedWorkflow: string | undefined;
     try {
       selectedWorkflow = extractWorkflowDirective(task)
@@ -504,12 +521,13 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     const taskBody = extractWorkflowDirective(task)
       ? task
       : `${task.trim()}\n\n## Constraints\n- workflow: ${selectedWorkflow}`;
-    return this.enqueueTaskInProject(project, taskBody, options);
+    return this.enqueueTaskInProject(project, taskBody, executionPolicy, options);
   }
 
   async enqueueProfileTask(
     profileName: string,
     task: string,
+    executionPolicy: TaktTaskExecutionPolicy,
   ): Promise<TaktBridgeEnqueueResult> {
     const context = this.context;
     if (!context?.hasUI) {
@@ -521,7 +539,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     const project = this.ensureProject(profile.cwd);
     await this.refreshProject(project, { includeTaskList: false });
-    const result = await this.enqueueTaskInProject(project, task, { throwOnError: true });
+    const result = await this.enqueueTaskInProject(project, task, executionPolicy, { throwOnError: true });
     if (!result) {
       throw new Error(`TAKT task could not be queued in ${project.label}`);
     }
@@ -564,6 +582,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   private async enqueueTaskInProject(
     project: ManagedProject,
     task: string,
+    executionPolicy: TaktTaskExecutionPolicy,
     options: { throwOnError?: boolean } = {},
   ): Promise<TaktBridgeEnqueueResult | undefined> {
     const context = this.context;
@@ -587,9 +606,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         );
       }
       try {
-        const result: VerifiedTaktDirectEnqueueResult = await project.enqueueClient.enqueue(task);
+        const result: VerifiedTaktDirectEnqueueResult = await project.enqueueClient.enqueue(task, executionPolicy);
         this.unverifiedQueueWorkflows.delete(project.id);
-        context.ui.notify(`TAKT task queued for ${project.label} (worktree run).`, "info");
+        context.ui.notify(
+          `TAKT task queued for ${project.label} (${formatTaktTaskExecutionPolicy(executionPolicy)}).`,
+          "info",
+        );
         await this.refreshProject(project, { includeTaskList: false });
         return { project: project.label, cwd: project.cwd, ...result };
       } catch (error) {
@@ -1554,6 +1576,40 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     const index = labels.indexOf(selected);
     return catalog.workflows[index]?.name;
+  }
+
+  private async selectTaskExecutionPolicy(
+    project: ManagedProject,
+  ): Promise<TaktTaskExecutionPolicy | undefined> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      return undefined;
+    }
+    const worktreeChoice = await context.ui.select(
+      `Worktree for ${project.label} (choose every task)`,
+      ["Create isolated worktree", "Use project checkout"],
+    );
+    if (!worktreeChoice) {
+      return undefined;
+    }
+    const prChoice = await context.ui.select(
+      `PR delivery for ${project.label} (choose every task)`,
+      worktreeChoice === "Create isolated worktree"
+        ? ["No PR", "Regular PR", "Draft PR"]
+        : ["No PR"],
+    );
+    if (!prChoice) {
+      return undefined;
+    }
+    const prMode: TaktPrMode = prChoice === "Draft PR"
+      ? "draft"
+      : prChoice === "Regular PR"
+        ? "regular"
+        : "none";
+    return {
+      worktree: worktreeChoice === "Create isolated worktree",
+      prMode,
+    };
   }
 
   /**
@@ -3253,6 +3309,8 @@ export default function register(pi: ExtensionAPI): void {
       "This tool creates a pending task only; use takt_run_pending for explicit queue/run execution.",
       "Pass the exact task body unchanged. Do not silently shorten acceptance criteria or verification steps.",
       "The task body must contain one exact workflow: <id> directive; the directly persisted workflow is verified before success is returned.",
+      "Pass worktree and prMode chosen for this task; never infer either setting from project defaults.",
+      "The persisted worktree/PR settings are verified before success is returned; mismatch fails closed.",
     ],
     parameters: TAKT_ENQUEUE_TASK_PARAMETERS,
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
@@ -3260,11 +3318,23 @@ export default function register(pi: ExtensionAPI): void {
       const result = await activeRuntime.enqueueProfileTask(
         params.profile?.trim() || "pi-docs",
         params.task,
+        { worktree: params.worktree, prMode: params.prMode },
       );
       return {
         content: [{
           type: "text",
-          text: `TAKT task queued: ${result.project}\n${result.cwd}\nworkflow: ${result.workflow}\nverified: ${result.workflowVerified}\nstatus: ${result.status}\ntasksFile: ${result.tasksFile}\ntaskName: ${result.taskName}`,
+          text: [
+            `TAKT task queued: ${result.project}`,
+            result.cwd,
+            `workflow: ${result.workflow}`,
+            `worktree: ${result.executionOptions.worktree}`,
+            `auto_pr: ${result.executionOptions.autoPr}`,
+            `draft_pr: ${result.executionOptions.draftPr}`,
+            `verified: ${result.workflowVerified && result.executionOptionsVerified}`,
+            `status: ${result.status}`,
+            `tasksFile: ${result.tasksFile}`,
+            `taskName: ${result.taskName}`,
+          ].join("\n"),
         }],
         details: result,
       };
@@ -3611,7 +3681,7 @@ pi.registerCommand("takt:flush", {
   });
 
   pi.registerCommand("takt:enqueue", {
-    description: "Queue a TAKT task directly; pass a project path to target another folder",
+    description: "Queue a TAKT task after choosing worktree and PR delivery mode",
     handler: async (args, context) => {
       if (!context.hasUI || !runtime) {
         return;

@@ -77,7 +77,11 @@ test("fresh Pi loader exposes the executable tool schema", async () => {
   const enqueueTool = tools.get("takt_enqueue_task").definition;
   assert.equal(enqueueTool.parameters.type, "object");
   assert.ok(enqueueTool.parameters.required.includes("task"));
+  assert.ok(enqueueTool.parameters.required.includes("worktree"));
+  assert.ok(enqueueTool.parameters.required.includes("prMode"));
   assert.equal(enqueueTool.parameters.properties.profile.type, "string");
+  assert.equal(enqueueTool.parameters.properties.worktree.type, "boolean");
+  assert.ok(enqueueTool.parameters.properties.prMode.anyOf);
 });
 
 test("a second fresh extension registration publishes the same tool contract", () => {
