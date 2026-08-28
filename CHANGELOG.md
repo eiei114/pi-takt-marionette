@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-08-29
+
+- **Run outcome retention**: a finished TAKT run's `✅ 完了` / `🔴 ❌ 失敗`
+  row now stays visible in the session-owned live widget until the project's
+  next run starts or the Pi session ends, instead of disappearing the moment
+  the run finishes.
+- Run completion notifications now carry the outcome: `✅ TAKT <label>
+  finished.` (info) or `🔴 TAKT <label> failed (exit N).` (error).
+- A manually stopped session hides immediately and is never rendered as ✅.
+
 ## 0.3.6 - 2026-08-28
 
 - `takt_resume_run` no longer reports a successful resume when TAKT picks a

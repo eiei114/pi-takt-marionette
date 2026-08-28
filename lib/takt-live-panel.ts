@@ -337,8 +337,8 @@ export function sessionRow(project: TaktProjectWidgetEntry, width: number, now: 
   }
 
   if (project.stage === "failed") {
-    const detail = failureText ? ` · ${truncateInline(failureText, 44)}` : "";
-    return `🔴 ${project.label}${workflowTag} ❌ ${t("failedState")}${detail}`;
+    // Conclusion only: the failure reason stays available in diagnostics.
+    return `🔴 ${project.label}${workflowTag} ❌ ${t("failedState")}`;
   }
 
   // Running without run metadata yet (or right after a lifecycle transition).
@@ -388,12 +388,21 @@ function isActiveRunState(run: Pick<TaktRunSnapshot, "status" | "sessionStatus">
   return run.status === "running" || run.sessionStatus === "live";
 }
 
+/**
+ * Run outcome retention: a finished run's success/failure row stays visible
+ * in this session-owned widget until the project's next run starts or the Pi
+ * session ends. Completed and failed stages are retained. A manually stopped
+ * session hides immediately — the user already knows it stopped, and it must
+ * never be mistaken for a successful ✅ run.
+ */
 function isDisplayableProject(project: TaktProjectWidgetEntry, now: number): boolean {
-  if (isTerminalProjectStage(project.stage)) {
+  if (project.stage === "stopped") {
     return false;
   }
   return Boolean(
     project.runner?.isRunning ||
+    project.stage === "completed" ||
+    project.stage === "failed" ||
     (!project.runner?.hasSession && project.stage !== undefined && project.stage !== "idle"),
   );
 }
@@ -401,10 +410,6 @@ function isDisplayableProject(project: TaktProjectWidgetEntry, now: number): boo
 /** True when this Pi session owns the TAKT process behind the entry. */
 function hasOwnedRunner(project: TaktProjectWidgetEntry): boolean {
   return Boolean(project.runner?.hasSession || project.runner?.isRunning);
-}
-
-function isTerminalProjectStage(stage: TaktExecStage | undefined): boolean {
-  return stage === "stopped" || stage === "completed" || stage === "failed";
 }
 
 /** Keep custom widget output inside Pi's terminal-width invariant. */
@@ -444,7 +449,18 @@ function findActiveRun(summary: TaktSummary | undefined): TaktRunSnapshot | unde
 }
 
 function compareProjectActivity(left: TaktProjectWidgetEntry, right: TaktProjectWidgetEntry): number {
-  return projectActivityScore(right) - projectActivityScore(left) || left.label.localeCompare(right.label);
+  return projectActivityScore(right) - projectActivityScore(left) ||
+    retainedOutcomeTime(right) - retainedOutcomeTime(left) ||
+    left.label.localeCompare(right.label);
+}
+
+/** Latest retained-run end time: newer outcomes surface above older ones. */
+function retainedOutcomeTime(project: TaktProjectWidgetEntry): number {
+  const ended = project.summary?.runs
+    .filter((run) => run.status === "completed" || run.status === "failed")
+    .map((run) => (run.endTime !== undefined ? Date.parse(run.endTime) : Number.NEGATIVE_INFINITY))
+    .filter((value) => Number.isFinite(value));
+  return ended && ended.length > 0 ? Math.max(...ended) : Number.NEGATIVE_INFINITY;
 }
 
 function projectActivityScore(project: TaktProjectWidgetEntry): number {

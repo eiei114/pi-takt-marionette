@@ -435,7 +435,12 @@ test("extension replaces owned exec and starts again after natural exit", async 
     assert.equal(completed.stage, "completed");
     assert.equal(completed.lastExit.code, 0);
     assert.equal(typeof completed.pid, "number");
-    assert.equal(context.widgetUpdates.at(-1)?.widget, undefined);
+    // Run outcome retention: the widget stays mounted with the ✅ outcome row
+    // instead of being cleared the moment the run finishes.
+    assert.notEqual(context.widgetUpdates.at(-1)?.widget, undefined);
+    assert.ok(context.notifications.some(
+      (entry) => entry.message.includes("✅ TAKT project finished") && entry.type === "info",
+    ), String(context.notifications.map((entry) => entry.message)));
 
     const third = await invoke(tools, "takt_exec_prompt", {
       profile: "pi-docs",
@@ -491,7 +496,7 @@ test("stopping a bridge-owned PTY clears the live widget", async () => {
   }
 });
 
-test("completed exec workflow clears the widget before interactive PTY exit", async () => {
+test("completed exec workflow keeps the retained outcome widget alive", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-completed-widget-"));
   const project = join(root, "project");
   mkdirSync(project);
@@ -515,8 +520,10 @@ test("completed exec workflow clears the widget before interactive PTY exit", as
     await new Promise((resolve) => setTimeout(resolve, 2_200));
     assert.notEqual(context.widgetUpdates.at(-1)?.widget, undefined);
 
+    // The completed run keeps the widget mounted with the retained ✅/❌ row.
     writeCompletedRunMeta(project);
-    await waitFor(() => context.widgetUpdates.at(-1)?.widget === undefined);
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    assert.notEqual(context.widgetUpdates.at(-1)?.widget, undefined);
     const screen = await invoke(tools, "takt_read_screen", { rows: 4 }, context);
     assert.equal(screen.details.status, "completed");
     assert.equal(screen.details.running, false);
