@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `takt_resume_run` no longer reports a successful resume when TAKT picks a
+  stale run whose workflow is missing (`Workflow "..." not found for direct
+  run "..."`). It now fails with the failing line and a recovery hint (queued
+  tasks are recovered with `takt run`) instead of pretending to continue.
+- `TAKT status check failed for <profile>` errors now include the underlying
+  cause (for example an invalid `.takt/tasks.yaml`) instead of the bare label.
+
 ## 0.3.5 - 2026-08-26
 
 - Replace ACP task enqueue with direct, lock-protected writes to
