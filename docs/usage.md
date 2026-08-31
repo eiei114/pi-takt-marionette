@@ -340,6 +340,13 @@ repeating background warning. Unexpected background refresh failures follow
 the same policy: one warning, then an inline `xN` count for the same error;
 successful refresh resets the counter.
 
+For active, stale, or failed runs, `/takt:status` also reads the latest
+`.takt/runs/<slug>/logs/*.jsonl` tail (64 KiB) and shows a compact
+`log details` line with recent step, phase, worker progress, and a capped,
+sanitized error excerpt when present. Missing logs show `no logs`; malformed
+tail lines are skipped without failing the overlay. The live widget and
+`takt_read_screen` stay summary-only and do not surface raw NDJSON payloads.
+
 The diagnostic overlay's `running`, `pending`, `blocked`, `failed`, and
 `completed` counts are reconciled from both sources. A running metadata record
 is `live` only when a matching metadata/task record exposes a live owner PID; a

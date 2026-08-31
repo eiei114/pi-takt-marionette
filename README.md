@@ -79,7 +79,7 @@ pi -e .
 | `/takt:mode [pi\|takt\|pi-auto]` | Cycle or set dual-input mode (`Ctrl+Alt+T`) |
 | `/takt:session previous\|next` | Switch fullscreen focus to the previous/next running session (same ordering as `Ctrl+Alt+↑/↓`) |
 | `/takt:stop [path]` | Confirm and interrupt a TAKT process started by Pi |
-| `/takt:status` | Open the optional diagnostic state overlay |
+| `/takt:status` | Open the optional diagnostic state overlay (includes bounded NDJSON log details when run logs exist) |
 
 The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. The
 `takt-pi-next-step` Skill is the ask-matt-style navigator for "what next?"

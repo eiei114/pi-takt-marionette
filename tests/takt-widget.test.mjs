@@ -87,3 +87,66 @@ test("widget reports failures without embedding controls", () => {
   assert.match(lines.at(-1), /provider unavailable/);
   assert.ok(lines.every((line) => !line.includes("Enter") && !line.includes("retry")));
 });
+
+test("status details render bounded log diagnostics for active runs", () => {
+  const lines = renderTaktDetails({
+    ...summary,
+    runs: [{
+      ...summary.runs[0],
+      status: "running",
+      logDiagnostics: {
+        available: true,
+        step: "implement",
+        phase: "execute",
+        workers: { done: 1, total: 2 },
+        eventType: "phase_start",
+      },
+    }],
+  });
+
+  assert.ok(lines.some((line) => line.startsWith("log details: step implement")));
+  assert.ok(lines.some((line) => line.includes("workers 1/2")));
+});
+
+test("status details show sanitized error excerpts and unavailable log reasons", () => {
+  const failed = renderTaktDetails({
+    ...summary,
+    runs: [{
+      ...summary.runs[0],
+      status: "failed",
+      logDiagnostics: {
+        available: true,
+        eventType: "step_failed",
+        message: "provider unavailable",
+      },
+    }],
+  });
+  assert.ok(failed.some((line) => line.includes("log details:") && line.includes("error: provider unavailable")));
+
+  const missing = renderTaktDetails({
+    ...summary,
+    runs: [{
+      ...summary.runs[0],
+      status: "stale",
+      logDiagnostics: { available: false, reason: "no_logs" },
+    }],
+  });
+  assert.ok(missing.some((line) => line.includes("log details: no logs")));
+});
+
+test("widget stays summary-only and does not render log details", () => {
+  const withDiagnostics = {
+    ...summary,
+    runs: [{
+      ...summary.runs[0],
+      logDiagnostics: {
+        available: true,
+        step: "implement",
+        message: "secret should not appear in widget",
+      },
+    }],
+  };
+  const lines = renderTaktWidget(withDiagnostics);
+  assert.ok(lines.every((line) => !line.includes("log details")));
+  assert.ok(lines.every((line) => !line.includes("secret should not appear")));
+});

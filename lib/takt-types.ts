@@ -83,7 +83,28 @@ export interface TaktRunSnapshot {
   phase?: 1 | 2 | 3;
   reason?: string;
   failure?: string;
+  /** Bounded NDJSON log tail summary for diagnostic overlays. */
+  logDiagnostics?: TaktRunLogDiagnostics;
 }
+
+/** Bounded, sanitized facts parsed from a run's latest JSONL log tail. */
+export type TaktRunLogDiagnostics =
+  | {
+      available: true;
+      eventType?: string;
+      step?: string;
+      phase?: string;
+      status?: string;
+      workers?: { done: number; total: number };
+      timestamp?: string;
+      message?: string;
+      skippedLines?: number;
+    }
+  | {
+      available: false;
+      reason: "no_logs" | "unreadable" | "no_events";
+      skippedLines?: number;
+    };
 
 export interface TaktTaskItem {
   kind: string;

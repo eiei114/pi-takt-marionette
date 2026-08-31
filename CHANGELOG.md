@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 - 2026-08-31
+
+- **`/takt:status` log details**: the diagnostic overlay now reads the latest
+  run JSONL log tail (64 KiB, bounded) and shows a compact `log details`
+  section with recent step, phase, worker progress, and a sanitized error
+  excerpt when available. Missing or malformed logs surface short
+  `no logs` / `unavailable` reasons instead of breaking the overlay.
+  The live widget and `takt_read_screen` stay summary-only.
+
 ## 0.5.0 - 2026-08-29
 
 - **Width-aware name elision**: long project folder names, workflow names,
