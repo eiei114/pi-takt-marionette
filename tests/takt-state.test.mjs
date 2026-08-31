@@ -368,3 +368,111 @@ test("readRunPhaseProgress counts live phases and workers from the log tail", as
   // A run without any log file yields nothing.
   assert.equal(readRunPhaseProgress(cwd, "missing-slug"), undefined);
 });
+
+test("readRunLogDiagnostics summarizes step, phase, workers, and sanitized errors", async () => {
+  const { readRunLogDiagnostics, sanitizeLogExcerpt } = await import("../lib/takt-state.ts");
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-diag-"));
+  const slug = "20260831-run";
+  const logsDirectory = join(cwd, ".takt", "runs", slug, "logs");
+  mkdirSync(logsDirectory, { recursive: true });
+  const events = [
+    { type: "workflow_start", timestamp: "2026-08-31T01:00:00.000Z" },
+    { type: "step_start", step: "implement" },
+    { type: "phase_start", phaseExecutionId: "w1:a", phaseName: "worker-1" },
+    { type: "phase_start", phaseExecutionId: "w2:a", phaseName: "worker-2" },
+    { type: "phase_complete", phaseExecutionId: "w1:a", phaseName: "worker-1" },
+    { type: "step_failed", step: "implement", error: "provider\r\nunavailable" },
+  ];
+  writeFileSync(join(logsDirectory, "run.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"), "utf8");
+
+  const diagnostics = readRunLogDiagnostics(cwd, slug);
+  assert.equal(diagnostics.available, true);
+  assert.equal(diagnostics.step, "implement");
+  assert.equal(diagnostics.eventType, "step_failed");
+  assert.deepEqual(diagnostics.workers, { done: 1, total: 2 });
+  assert.equal(diagnostics.message, "provider unavailable");
+
+  assert.equal(
+    sanitizeLogExcerpt("\u001b[31mfail\u001b[0m\nline", 40),
+    "fail line",
+  );
+});
+
+test("readRunLogDiagnostics returns unavailable reasons without throwing", async () => {
+  const { readRunLogDiagnostics } = await import("../lib/takt-state.ts");
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-diag-missing-"));
+
+  assert.deepEqual(readRunLogDiagnostics(cwd, "missing-slug"), {
+    available: false,
+    reason: "no_logs",
+  });
+
+  const slug = "partial-log";
+  const logsDirectory = join(cwd, ".takt", "runs", slug, "logs");
+  mkdirSync(logsDirectory, { recursive: true });
+  writeFileSync(
+    join(logsDirectory, "run.jsonl"),
+    ["partial line without brace", '{"type":"workflow_start"}', "{not json"].join("\n"),
+    "utf8",
+  );
+  const diagnostics = readRunLogDiagnostics(cwd, slug);
+  assert.equal(diagnostics.available, true);
+  assert.equal(diagnostics.eventType, "workflow_start");
+  assert.equal(diagnostics.skippedLines, 2);
+});
+
+test("readRunLogDiagnostics ignores non-object JSONL records and partial tail lines", async () => {
+  const { readRunLogDiagnostics } = await import("../lib/takt-state.ts");
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-diag-tail-"));
+  const slug = "tail-run";
+  const logsDirectory = join(cwd, ".takt", "runs", slug, "logs");
+  mkdirSync(logsDirectory, { recursive: true });
+  const body = [
+    '{"type":"step_start","step":"plan"}',
+    '{"type":"phase_start","phaseExecutionId":"p1","phaseName":"execute"}',
+  ].join("\n");
+  const padded = `${"x".repeat(70 * 1024)}\n${body}`;
+  writeFileSync(join(logsDirectory, "run.jsonl"), padded, "utf8");
+
+  const diagnostics = readRunLogDiagnostics(cwd, slug);
+  assert.equal(diagnostics.available, true);
+  assert.equal(diagnostics.step, "plan");
+  assert.equal(diagnostics.phase, "execute");
+});
+
+test("readRunSnapshots attaches logDiagnostics for running and failed runs", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-diag-snap-"));
+  const slug = "active-run";
+  const runDirectory = join(cwd, ".takt", "runs", slug);
+  const logsDirectory = join(runDirectory, "logs");
+  mkdirSync(logsDirectory, { recursive: true });
+  writeFileSync(
+    join(runDirectory, "meta.json"),
+    JSON.stringify({
+      task: "Ship diagnostics",
+      workflow: "default",
+      runSlug: slug,
+      runRoot: runDirectory,
+      reportDirectory: join(runDirectory, "reports"),
+      contextDirectory: join(runDirectory, "context"),
+      logsDirectory,
+      status: "running",
+      startTime: "2026-08-31T01:00:00.000Z",
+      currentStep: "implement",
+    }),
+    "utf8",
+  );
+  writeFileSync(
+    join(logsDirectory, "run.jsonl"),
+    [
+      '{"type":"step_start","step":"implement"}',
+      '{"type":"phase_start","phaseExecutionId":"p1","phaseName":"execute"}',
+    ].join("\n"),
+    "utf8",
+  );
+
+  const snapshots = readRunSnapshots(cwd);
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].logDiagnostics?.available, true);
+  assert.equal(snapshots[0].logDiagnostics?.step, "implement");
+});
