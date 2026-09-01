@@ -70,8 +70,18 @@ manual registration or when the setup tool is unavailable.
 
 ## Project workflow overrides
 
-The orchestrator may provide a project-owned workflow directive. Preserve it
-verbatim in the task body and do not replace it with the default Pi lane.
+The orchestrator may provide an exact builtin or project-owned workflow. Use
+`takt_run_workflow` for that route; do not leave `workflow:` as prompt prose and
+do not replace it with the default Pi lane. This direct workflow tool starts
+immediately, so call it only after explicit approval of task, workflow,
+provider/model, temporary extensions, and PR behavior. It has no `/go` phase.
+Set `pipeline:true` when `autoPr` or `draftPr` is requested; otherwise the tool
+rejects the configuration before starting TAKT.
+
+For a PR-review fix, pass the positive PR number as `prNumber` and omit `task`.
+The bridge maps it to TAKT's native `--pr <number>` input so TAKT fetches review
+comments, checks out the PR branch, and retains base/head diff context. Do not
+encode the PR URL or number into task prose when `prNumber` is available.
 
 If this skill is invoked directly and the task body has **no** `workflow:`
 line, apply the same ambiguous-only rule as the orchestrator:
@@ -80,8 +90,8 @@ line, apply the same ambiguous-only rule as the orchestrator:
 2. If the user already named a workflow/lane, or exactly one candidate matches
    intent, use that id.
 3. If two or more candidates remain (same intent class or unspecified lane),
-   ask once with `ask_user_question` / `cursor_ask_question`, then insert
-   `workflow: <chosen-id>` into the prompt body before `takt_exec_prompt`.
+   ask once with `ask_user_question` / `cursor_ask_question`, then pass the
+   chosen id as the exact `workflow` argument to `takt_run_workflow`.
 4. Do not ask on resume/recovery of an existing session.
 
 For DTM Cursor (`dtm-cursor`):

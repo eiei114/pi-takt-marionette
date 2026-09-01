@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 - 2026-09-01
+
+- Add a platform keyboard adapter for dual-input mode. `F6` remains the
+  portable primary shortcut; macOS shows `F6 / Fn+F6` and `Ctrl+Option+T`,
+  while Windows keeps `Ctrl+Alt+T` unchanged.
+- Repair macOS `node-pty` `spawn-helper` permissions at runtime and resolve
+  hoisted npm layouts, removing the need for manual chmod before starting a
+  bridge-owned TAKT PTY.
+- Add `F6` as a portable TAKT input-mode shortcut, including interception while
+  TAKT owns terminal focus (`Fn+F6` on Macs configured for media keys).
+- Add `takt_run_workflow` for exact builtin or project workflow execution in a
+  bridge-owned PTY, including provider/model, temporary Pi extensions,
+  repository, native `--pr` review context, and regular/draft PR options.
+- Keep broker-owned TAKT PTYs alive across Pi `/reload`, then reconnect to the
+  same PID and replay the bounded transcript so raw screen inspection and input
+  continue in the replacement extension runtime.
+
 ## 0.3.1 - 2026-08-22
 
 - Add the pi-takt-marionette mascot icon to the README and package assets:

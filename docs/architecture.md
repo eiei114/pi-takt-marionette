@@ -10,17 +10,21 @@ Pi command / project path
         ├── profile registry ── explicit alias → project cwd + exec preset
         │
         ├── takt_exec_prompt tool ── reconcile → stop → clear → exec → prompt → auto `/go` or manual `awaiting_go`
+        ├── takt_run_workflow tool ── exact workflow/task/provider/model → bridge-owned direct PTY run
         ├── takt_submit_go tool ── explicit raw `/go` + Enter → pi-auto
         ├── takt_resume_run tool ── explicit provider/model → resume → Requeue → pi-auto (no clear)
         ├── takt_stop / takt_set_mode tools ── agent recovery without shell/taskkill
         │
         ├── takt_enqueue_task / takt-acp (stdio, ACP) ── enqueue confirmed task
         │
-        └── node-pty → `takt run` / `takt exec` in selected project
-                         │
-              ANSI/TTY output → xterm headless screen buffer
-                         │
-              Pi stacked project live widget
+        ├── keyboard adapter → normalized mode-cycle action
+        └── socket client ↔ detached PTY broker → node-pty → `takt run` / `takt exec`
+                               │                         │
+                     bounded raw transcript      ANSI/TTY output
+                               │                         │
+                         reconnect/replay → xterm headless screen buffer
+                                                     │
+                                          Pi stacked project live widget
 ```
 
 ## Boundaries
@@ -41,7 +45,17 @@ Pi command / project path
   record to `aborted` while retaining unknown fields and checkpoint payloads.
   Explicit forced recovery applies only to stale/unknown records, never a live
   externally owned PID.
-- Each bridge-owned project has one PTY/xterm screen. Projects are rendered as
+- Each bridge-owned project has one detached PTY broker and one extension-side
+  xterm screen. On `/reload`, the old extension disconnects without stopping
+  TAKT; the new extension reconnects through the persisted broker descriptor
+  and rebuilds xterm by replaying the broker's bounded transcript. Discovery
+  uses an atomic authenticated descriptor inside a mode-0700 per-user runtime
+  directory; each broker owns a unique mode-0600 socket, preventing concurrent
+  starters from unlinking one another. Unix uses a user-local Unix socket and
+  Windows uses a named pipe. Stage, prompt preview, and queued input live beside
+  the broker state so approval controls survive reconnect. Real session shutdown
+  stops the owned process and broker, and a disconnected live broker enforces a
+  bounded five-minute reconnect lease. Projects are rendered as
   a single stacked widget above the normal Pi editor, with active projects first.
   The live widget keeps a lightweight 100 ms repaint fallback while a PTY is
   active because host-side screen callbacks may be coalesced during in-place
@@ -59,6 +73,12 @@ Pi command / project path
 - The bundled Agent Skill uses `takt_exec_prompt` for the profile-bound prompt
   submission flow; shell execution is not used as a substitute because it would
   hide the child PTY from the Pi widget.
+- Exact builtin or project workflow execution uses `takt_run_workflow`. It
+  forwards the task or native `--pr` source, workflow id, provider/model,
+  repository, and PR flags as discrete CLI arguments. Native PR input retains
+  TAKT's review-comment and base/head context instead of reducing it to task
+  prose. Optional Pi extensions are injected through the child environment for
+  that run only and never persist into Pi settings.
 - Manual GO mode waits for clarification to finish and exposes
   `awaitingGo: true`; only `takt_submit_go` may cross that approval boundary.
   GO commands use raw terminal input rather than bracketed-paste markers.
@@ -67,7 +87,7 @@ Pi command / project path
   avoiding both task replay and bracketed-paste control sequences in the menu.
 - External project processes can be detected from `.takt` metadata, but their
   original PTY is not attachable safely. They use a status card; only
-  bridge-owned projects show raw output.
+  broker-owned projects show reconnectable raw output.
 - The background project-stack refresh reads persistent `.takt/runs` metadata
   only. The public `takt list` queue is reconciled on demand by diagnostics and
   explicit task operations, so an invalid queue cannot fail the live widget
@@ -75,8 +95,13 @@ Pi command / project path
   warning plus an `xN` status count and reset after recovery.
 - Default input mode is `pi`: input is not forwarded implicitly. `/takt:send`
   remains the explicit seam, and `/takt:stop` owns stopping bridge children.
-- Optional dual-input modes cycle with a shortcut: `pi` → `takt` (human types
-  into the active bridge-owned PTY) → `pi-auto` (Pi may send allowed follow-ups).
+- Optional dual-input modes use a platform keyboard adapter and cycle with
+  `F6` (`Fn+F6` on macOS media-key layouts) or the platform compatibility
+  alias: `pi` → `takt` (human types into the active bridge-owned PTY) →
+  `pi-auto` (Pi may send allowed follow-ups). Windows keeps `Ctrl+Alt+T`;
+  macOS displays `Ctrl+Option+T` as the compatibility label. The adapter
+  normalizes terminal bytes before they reach the platform-neutral mode state
+  machine, and unknown bytes pass through unchanged.
   A successful `takt_exec_prompt` enters `pi-auto` automatically. Destructive
   auto actions still require confirmation. External status cards are never
   writable. Stop retries are bounded; a timeout is returned as an explicit
@@ -100,6 +125,10 @@ Pi command / project path
   or run timestamp. Non-running cards disappear after 30 minutes without new
   activity, but the bridge never mutates `.takt/tasks.yaml` or run history as
   part of that display cleanup.
+- The macOS PTY preflight repairs `node-pty` `spawn-helper` permissions during
+  install and again in the detached broker, resolving both package-local and
+  hoisted npm dependency layouts. This keeps the global `takt` executable as
+  the runtime default and avoids requiring a local TAKT build.
 - A run is not assumed to be singular; the summary is derived from all run
   records in the project when the optional diagnostic overlay is requested.
 

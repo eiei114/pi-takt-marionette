@@ -92,6 +92,19 @@ clear step is mandatory even if `clear: false` is supplied. It returns after
 submission, switches input mode to `pi-auto`, and keeps
 the live raw PTY visible in the Pi project stack.
 
+When the user requires an exact builtin or project workflow, the runner uses
+`takt_run_workflow` instead of treating `workflow:` as prompt prose. The tool
+starts a bridge-owned direct TAKT run and forwards `--task`, `--workflow`,
+provider/model, repository, and PR flags as separate arguments. Pass
+`prNumber` instead of `task` for PR-review fixes; the bridge emits `--pr <N>` so
+TAKT fetches review comments and preserves the PR base/head and branch context.
+`task` and `prNumber` are mutually exclusive. Pi extension sources can be
+injected temporarily for that run without modifying Pi settings.
+An exact `#<number>` task remains a positional issue reference so TAKT fetches
+the issue instead of treating it as literal task prose.
+`autoPr` and `draftPr` require `pipeline:true`, matching TAKT's CLI contract;
+the bridge rejects that invalid combination before launching a child process.
+
 Use `takt_stop` to stop a stuck bridge-owned session without confirmation, and
 `takt_set_mode` for explicit mode changes. `takt_read_screen` reports status,
 PID, stage, and last exit so agents can tell `live` / `stale` / `completed` /
@@ -231,12 +244,15 @@ The stacked widget shows the current input mode:
 input: [pi] | takt | pi-auto
 ```
 
-Cycle with `Ctrl+Alt+T` or `/takt:mode`:
+Cycle with `F6` or `/takt:mode`. On Mac keyboards configured for media keys,
+press `Fn+F6`; `Ctrl+Option+T` remains the macOS compatibility shortcut.
+Windows keeps `Ctrl+Alt+T` unchanged. The first supported macOS terminals are
+Apple Terminal and iTerm2.
 
 | Mode | Behavior |
 |---|---|
 | `pi` | Default. Pi keeps editor focus. Use `/takt:send` or `takt_exec_prompt`. |
-| `takt` | Human keys go to the active bridge-owned TAKT PTY. `Ctrl+Alt+T` is intercepted before TAKT sees it, so mode cycling keeps working; `/takt:mode` also switches. |
+| `takt` | Human keys go to the active bridge-owned TAKT PTY. `F6` (macOS `Fn+F6`) and the platform compatibility shortcut are intercepted before TAKT sees them, so mode cycling keeps working; `/takt:mode` also switches. |
 | `pi-auto` | Pi may call `takt_read_screen` / `takt_send_input` for short follow-ups. |
 
 `takt_exec_prompt` enters `pi-auto` automatically after a successful submit.
@@ -247,6 +263,21 @@ back to `pi`. Destructive auto input such as `/clear`
 still asks for confirmation. `/takt:stop` keeps an interactive confirm; the
 `takt_stop` tool skips confirm so agents can recover cleanly.
 
+### macOS startup and keyboard troubleshooting
+
+The mode-cycle shortcut uses a platform keyboard adapter at the raw terminal
+input boundary. The input-mode state machine remains platform-neutral. `F6` is
+the primary shortcut on every OS; macOS displays `F6 / Fn+F6` because Mac
+function keys may be configured as media keys. Unknown terminal bytes pass
+through unchanged.
+
+The bridge defaults to the globally installed `takt` command. It does not
+require a local TAKT checkout or per-session PATH setup. Before starting a
+broker-owned PTY, Marionette repairs executable bits on `node-pty`'s
+`spawn-helper`, including the hoisted npm layout used by Pi. If macOS still
+reports `posix_spawnp failed`, check Xcode Command Line Tools and use an
+absolute `TAKT_COMMAND` only when Pi was launched without the expected PATH.
+
 ## Live widget and diagnostics
 
 `/takt` starts a run in the current project if no terminal session exists, or
@@ -254,12 +285,23 @@ shows the current stack. `/takt:live [path]` and `/takt:sessions` open an
 Esc-closable overlay with the raw TAKT screen of the chosen session; the
 stacked widget itself stays summary-only. The widget is placed above the normal
 Pi editor, so Pi and multiple TAKT sessions stay visible together. Raw peek
-overlays use `node-pty` plus an xterm-compatible headless buffer so ANSI cursor
+overlays use a detached `node-pty` broker plus an xterm-compatible headless buffer so ANSI cursor
 movement, clear-screen sequences, colors, and progress updates are rendered as
 a screen rather than dumped as broken escape codes. Peek output is capped to
 the latest lines to preserve Pi's editor space. While a bridge-owned PTY is
 active, the widget also performs a lightweight 100 ms repaint fallback so the
 spinner keeps turning even if host-side screen events are coalesced.
+
+`/reload` detaches the old extension client but leaves its broker-owned TAKT
+process alive. The replacement extension reconnects through a Unix socket on
+macOS/Linux or a named pipe on Windows, keeps the same PID, and replays the
+bounded raw transcript to restore the xterm screen. Execution stage, prompt
+preview, and queued input are restored too, so an `awaiting_go` session can
+still use `takt_submit_go` after reload. Broker discovery uses an authenticated
+descriptor in a private per-user runtime directory. Quit and other real session
+shutdowns still stop the owned process; a live broker with no reconnecting
+client self-stops after five minutes. External terminals cannot be adopted
+retroactively because Marionette never owned their PTY.
 
 The background project-stack refresh reads persistent `.takt/runs` metadata and
 does not invoke `takt list`. The stacked widget itself only renders TAKT

@@ -174,6 +174,11 @@ validation evidence, changed files, and the actual commit/remote/PR result.
 available bridge tool cannot set the requested delivery option, report that
 limitation instead of claiming that a PR will appear.
 
+For review fixes on an existing pull request, carry its positive number as
+structured `prNumber` into the runner. Do not reduce the PR URL or number to task
+prose: the native PR source is what lets TAKT fetch review comments, check out
+the head branch, and retain the base/head diff context.
+
 ## Safety boundary
 
 - Queueing requires a finalized body and user confirmation.

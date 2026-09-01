@@ -3,8 +3,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { killWindowsProcessTree } from "../lib/process-control.ts";
-import { TaktRunController } from "../lib/takt-run-controller.ts";
+import { terminalContainsText, TaktRunController } from "../lib/takt-run-controller.ts";
 
 function createExitCommand(directory) {
   if (process.platform === "win32") {
@@ -83,45 +82,100 @@ test("waitForExit reports a bounded timeout and remains disposable", async () =>
   }
 });
 
-test("stop marks an unkillable PTY stale and suppresses a fresh start", async () => {
+test("reload attach restores broker control state and queued inputs", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-control-state-"));
+  const command = createBlockingCommand(cwd);
+  const first = new TaktRunController({ cwd, command, cols: 40, rows: 4 });
+  const queuedInputs = [{ text: "continue after reload", queuedAt: new Date().toISOString() }];
+
+  try {
+    await first.start(["exec", "blocking"]);
+    first.setControlState({ stage: "awaiting_go", queuedInputs });
+    const pid = first.pid;
+    await first.detach();
+
+    const second = new TaktRunController({ cwd, command, cols: 40, rows: 4 });
+    await second.attach();
+    assert.equal(second.pid, pid);
+    assert.equal(second.controlState.stage, "awaiting_go");
+    assert.deepEqual(second.controlState.queuedInputs, queuedInputs);
+    await second.shutdown();
+  } finally {
+    if (first.isRunning || first.hasSession) await first.shutdown();
+  }
+});
+
+test("concurrent controllers converge on one authenticated broker", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-singleton-"));
+  const blockingArgs = ["-e", "process.on('SIGINT', () => process.exit(130)); setInterval(() => {}, 1000)"];
+  const first = new TaktRunController({ cwd, command: process.execPath, cols: 40, rows: 4 });
+  const second = new TaktRunController({ cwd, command: process.execPath, cols: 40, rows: 4 });
+
+  try {
+    const results = await Promise.allSettled([first.start(blockingArgs), second.start(blockingArgs)]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+    await first.detach();
+    await second.detach();
+    await first.attach();
+    await second.attach();
+    assert.equal(first.isRunning, true);
+    assert.equal(second.isRunning, true);
+    assert.equal(first.pid, second.pid);
+    await first.shutdown();
+  } finally {
+    await second.detach();
+  }
+});
+
+test("attach orders snapshot and live events without losing final output", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-attach-race-"));
+  const first = new TaktRunController({ cwd, command: process.execPath, cols: 60, rows: 8 });
+  const second = new TaktRunController({ cwd, command: process.execPath, cols: 60, rows: 8 });
+  const script = [
+    "let index = 0;",
+    "const timer = setInterval(() => {",
+    "  console.log(`race-${index}`);",
+    "  index += 1;",
+    "  if (index === 80) { clearInterval(timer); console.log('RACE_FINAL_MARKER'); }",
+    "}, 1);",
+  ].join("\n");
+
+  try {
+    await first.start(["-e", script]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await first.detach();
+    await second.attach();
+    assert.equal((await second.waitForExit(5_000))?.code, 0);
+    assert.equal(second.status, "completed");
+    assert.equal(terminalContainsText(second.terminal, "RACE_FINAL_MARKER"), true);
+    await second.shutdown();
+  } finally {
+    await first.detach();
+  }
+});
+
+test("stop terminates a broker-owned PTY and allows a fresh start after dispose", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-stop-timeout-"));
   const blockingArgs = ["-e", "process.on('SIGINT', () => {}); setTimeout(() => {}, 20000)"];
-  let forceKillAttempts = 0;
   const controller = new TaktRunController({
     cwd,
     command: process.execPath,
     cols: 40,
     rows: 4,
-    interrupt: () => {},
-    forceKill: async (pty) => {
-      forceKillAttempts += 1;
-      if (forceKillAttempts > 1) {
-        if (process.platform === "win32") {
-          await killWindowsProcessTree(pty.pid);
-        } else {
-          pty.kill("SIGKILL");
-        }
-      }
-    },
   });
 
   try {
     await controller.start(blockingArgs);
-    await assert.rejects(
-      () => controller.stop(),
-      /TAKT process did not stop within 3 seconds/,
-    );
-    assert.equal(controller.status, "stale");
-    assert.equal(controller.isRunning, true);
-    assert.equal(forceKillAttempts, 1);
-    await assert.rejects(
-      () => controller.start(["exec", "fresh"]),
-      /TAKT process is already running; stop it before starting a fresh process/,
-    );
+    await controller.stop();
+    assert.equal(controller.status, "completed");
+    assert.equal(controller.isRunning, false);
+    await controller.dispose();
+    await controller.start(["-e", "process.exit(0)"]);
+    assert.equal((await controller.waitForExit(5_000))?.code, 0);
   } finally {
     if (controller.isRunning || controller.hasSession) {
       await controller.dispose();
     }
   }
-  assert.equal(forceKillAttempts, 2);
 });

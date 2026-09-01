@@ -111,7 +111,14 @@ function createTaktCommand(directory) {
     "  process.stdin.setEncoding(\"utf8\");",
     "  process.stdin.once(\"data\", () => { event(\"resume:requeue\"); process.stdout.write(\"Resuming workflow…\\r\\n\"); });",
     "} else {",
-    "if (operation !== \"exec\") process.exit(2);",
+    "if (operation !== \"exec\") {",
+    "  event(`workflow:${args.join(\"|\")}`);",
+    "  event(`extensions:${process.env.TAKT_PROVIDER_OPTIONS_PI_EXTENSIONS || \"\"}`);",
+    "  process.on(\"SIGINT\", () => { event(\"signal:workflow\"); process.exit(130); });",
+    "  process.stdout.write(\"Starting workflow…\\r\\n\");",
+    "  const workflowExitCode = Number(process.env.TEST_WORKFLOW_EXIT_CODE);",
+    "  if (Number.isInteger(workflowExitCode)) setTimeout(() => process.exit(workflowExitCode), 100);",
+    "} else {",
     "event(`exec:${preset}`);",
     "process.on(\"exit\", (code) => event(`exit:${preset}:${code}`));",
     "process.on(\"SIGINT\", () => { event(`signal:${preset}`); process.exit(130); });",
@@ -132,6 +139,7 @@ function createTaktCommand(directory) {
     "    process.exit(0);",
     "  }",
     "});",
+    "}",
     "}",
   ].join("\n"), "utf8");
 
@@ -159,6 +167,7 @@ function configureEnvironment(root, command, logPath, taskMode, listMode = "ok")
     ["TEST_OWNER_PID", process.env.TEST_OWNER_PID],
     ["TEST_CLEAR_MODE", process.env.TEST_CLEAR_MODE],
     ["TEST_PROMPT_DELAY_MS", process.env.TEST_PROMPT_DELAY_MS],
+    ["TEST_WORKFLOW_EXIT_CODE", process.env.TEST_WORKFLOW_EXIT_CODE],
   ]);
   process.env.APPDATA = root;
   process.env.XDG_CONFIG_HOME = root;
@@ -238,6 +247,222 @@ test("manual GO mode never submits /go until takt_submit_go is called", async ()
     const submitted = await invoke(tools, "takt_submit_go", { profile: "pi-docs" }, context);
     assert.equal(submitted.details.sentGo, true);
     assert.equal(logLines(logPath).includes("input:manual:go"), true);
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("exact workflow run forwards workflow, Pi model, extensions, and regular PR flags", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-workflow-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    const result = await invoke(tools, "takt_run_workflow", {
+      profile: "pi-docs",
+      task: "#1478",
+      workflow: "takt-default",
+      provider: "pi",
+      model: "openai-codex/gpt-5.6-luna:max",
+      extensions: ["npm:context-mode", "npm:pi-fff"],
+      repo: "nrslib/takt",
+      pipeline: true,
+      autoPr: true,
+    }, context);
+
+    assert.equal(result.details.workflow, "takt-default");
+    assert.equal(result.details.pipeline, true);
+    assert.equal(result.details.autoPr, true);
+    assert.equal(result.details.draftPr, false);
+    assert.deepEqual(result.details.extensions, ["npm:context-mode", "npm:pi-fff"]);
+    const lines = await waitFor(() => {
+      const observed = logLines(logPath);
+      return observed.some((line) => line.startsWith("workflow:")) ? observed : undefined;
+    });
+    assert.ok(lines.includes(
+      "workflow:#1478|--workflow|takt-default|--provider|pi|--model|openai-codex/gpt-5.6-luna:max|--repo|nrslib/takt|--pipeline|--auto-pr",
+    ));
+    assert.ok(lines.includes('extensions:["npm:context-mode","npm:pi-fff"]'));
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("exact PR workflow run forwards native --pr context without task prose", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-pr-workflow-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    const result = await invoke(tools, "takt_run_workflow", {
+      profile: "pi-docs",
+      prNumber: 1485,
+      workflow: "review-fix-takt-default",
+      provider: "pi",
+      model: "openai-codex/gpt-5.6-luna:max",
+      pipeline: true,
+      autoPr: true,
+    }, context);
+
+    assert.equal(result.details.prNumber, 1485);
+    assert.equal("task" in result.details, false);
+    const lines = await waitFor(() => {
+      const observed = logLines(logPath);
+      return observed.some((line) => line.startsWith("workflow:")) ? observed : undefined;
+    });
+    assert.ok(lines.includes(
+      "workflow:--pr|1485|--workflow|review-fix-takt-default|--provider|pi|--model|openai-codex/gpt-5.6-luna:max|--pipeline|--auto-pr",
+    ));
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("reload reconnects to the broker-owned PTY and restores its screen", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-reload-reconnect-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  const first = loadExtension();
+  const firstContext = createContext(project);
+  let second;
+  let secondContext;
+
+  try {
+    await invoke(first.tools, "takt_exec_prompt", {
+      profile: "pi-docs",
+      prompt: "survive reload",
+      clear: false,
+      preset: "reload-test",
+      goMode: "manual",
+    }, firstContext);
+
+    const before = await invoke(first.tools, "takt_read_screen", { rows: 8 }, firstContext);
+    assert.equal(before.details.ptyRunning, true);
+    assert.match(before.content[0].text, /Assistant>/);
+
+    await first.events.get("session_shutdown")?.({ reason: "reload" }, firstContext);
+    assert.equal(logLines(logPath).includes("signal:workflow"), false);
+
+    second = loadExtension();
+    secondContext = createContext(project);
+    await second.events.get("session_start")?.({ reason: "reload" }, secondContext);
+    const after = await invoke(second.tools, "takt_read_screen", { rows: 8 }, secondContext);
+    assert.equal(after.details.ptyRunning, true);
+    assert.equal(after.details.pid, before.details.pid);
+    assert.match(after.content[0].text, /Assistant>/);
+
+    const submitted = await invoke(second.tools, "takt_submit_go", { profile: "pi-docs" }, secondContext);
+    assert.equal(submitted.details.sentGo, true);
+    assert.equal(logLines(logPath).includes("input:reload-test:go"), true);
+  } finally {
+    if (second && secondContext) {
+      await second.events.get("session_shutdown")?.({ reason: "quit" }, secondContext);
+    } else {
+      await first.events.get("session_shutdown")?.({ reason: "quit" }, firstContext);
+    }
+    restoreEnvironment();
+  }
+});
+
+test("reload reconnect classifies a detached nonzero exit as failed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-reload-failure-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  process.env.TEST_WORKFLOW_EXIT_CODE = "7";
+  const first = loadExtension();
+  const firstContext = createContext(project);
+  let second;
+  let secondContext;
+
+  try {
+    await invoke(first.tools, "takt_run_workflow", {
+      profile: "pi-docs",
+      task: "fail while detached",
+      workflow: "test-workflow",
+      provider: "pi",
+      model: "openai-codex/gpt-5.6-luna:max",
+    }, firstContext);
+    await first.events.get("session_shutdown")?.({ reason: "reload" }, firstContext);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    second = loadExtension();
+    secondContext = createContext(project);
+    await second.events.get("session_start")?.({ reason: "reload" }, secondContext);
+    const after = await invoke(second.tools, "takt_read_screen", { rows: 8 }, secondContext);
+    assert.equal(after.details.ptyRunning, false);
+    assert.equal(after.details.stage, "failed");
+    assert.equal(after.details.lastExit.code, 7);
+  } finally {
+    delete process.env.TEST_WORKFLOW_EXIT_CODE;
+    if (second && secondContext) {
+      await second.events.get("session_shutdown")?.({ reason: "quit" }, secondContext);
+    } else {
+      await first.events.get("session_shutdown")?.({ reason: "quit" }, firstContext);
+    }
+    restoreEnvironment();
+  }
+});
+
+test("exact workflow run requires one valid task or PR source", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-workflow-source-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    await assert.rejects(
+      invoke(tools, "takt_run_workflow", {
+        profile: "pi-docs",
+        task: "Fix PR #1485",
+        prNumber: 1485,
+        workflow: "review-fix-takt-default",
+      }, context),
+      /accepts either task or prNumber, not both/,
+    );
+    await assert.rejects(
+      invoke(tools, "takt_run_workflow", {
+        profile: "pi-docs",
+        workflow: "review-fix-takt-default",
+      }, context),
+      /requires task or prNumber/,
+    );
+    await assert.rejects(
+      invoke(tools, "takt_run_workflow", {
+        profile: "pi-docs",
+        prNumber: 0,
+        workflow: "review-fix-takt-default",
+      }, context),
+      /prNumber must be a positive safe integer/,
+    );
+    assert.deepEqual(logLines(logPath), []);
   } finally {
     await events.get("session_shutdown")?.({ reason: "quit" }, context);
     restoreEnvironment();

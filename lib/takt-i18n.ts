@@ -21,6 +21,7 @@ export type MessageKey =
   | "modePi"
   | "modeTakt"
   | "modeAuto"
+  | "modeCycleHint"
   | "noActiveSessions"
   | "headerSessions"
   | "runningCount"
@@ -38,9 +39,10 @@ export type MessageKey =
 
 const MESSAGES: Record<TaktLang, Record<MessageKey, string>> = {
   en: {
-    modePi: "⌨️ You are typing in Pi · TAKT runs beside you · cycle: Ctrl+Alt+T or /takt:mode",
-    modeTakt: "⌨️ You are typing into TAKT · cycle: Ctrl+Alt+T or /takt:mode",
-    modeAuto: "🤖 Autopilot on — Pi watches TAKT and answers follow-ups · cycle: Ctrl+Alt+T or /takt:mode",
+    modePi: "⌨️ You are typing in Pi · TAKT runs beside you",
+    modeTakt: "⌨️ You are typing into TAKT",
+    modeAuto: "🤖 Autopilot on — Pi watches TAKT and answers follow-ups",
+    modeCycleHint: "cycle: {shortcut} or /takt:mode",
     noActiveSessions: "🎭 TAKT · no active sessions",
     headerSessions: "🎭 TAKT · {count} session{plural} · {detail}",
     runningCount: "{n} running",
@@ -57,9 +59,10 @@ const MESSAGES: Record<TaktLang, Record<MessageKey, string>> = {
     failedState: "failed",
   },
   ja: {
-    modePi: "⌨️ Piに入力中 · TAKTは横で実行中 · サイクル: Ctrl+Alt+T / /takt:mode",
-    modeTakt: "⌨️ TAKTへ入力中 · サイクル: Ctrl+Alt+T / /takt:mode",
-    modeAuto: "🤖 自動操縦ON — PiがTAKTのフォローアップに応答 · サイクル: Ctrl+Alt+T / /takt:mode",
+    modePi: "⌨️ Piに入力中 · TAKTは横で実行中",
+    modeTakt: "⌨️ TAKTへ入力中",
+    modeAuto: "🤖 自動操縦ON — PiがTAKTのフォローアップに応答",
+    modeCycleHint: "サイクル: {shortcut} / /takt:mode",
     noActiveSessions: "🎭 TAKT · 動いているセッションなし",
     headerSessions: "🎭 TAKT · {count}セッション · {detail}",
     runningCount: "実行{n}",

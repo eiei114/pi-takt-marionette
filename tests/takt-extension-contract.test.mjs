@@ -6,7 +6,7 @@ import test from "node:test";
 import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
 import register from "../extensions/index.ts";
 
-function loadTools() {
+function loadTools(shortcuts = []) {
   const tools = new Map();
   const pi = {
     registerTool(tool) {
@@ -14,14 +14,17 @@ function loadTools() {
     },
     on() {},
     registerCommand() {},
-    registerShortcut() {},
+    registerShortcut(shortcut) {
+      shortcuts.push(shortcut);
+    },
   };
   register(pi);
   return tools;
 }
 
 test("fresh Pi runtime publishes all TAKT control tools and replace schema", () => {
-  const tools = loadTools();
+  const shortcuts = [];
+  const tools = loadTools(shortcuts);
 
   assert.deepEqual([...tools.keys()].sort(), [
     "takt_enqueue_task",
@@ -29,17 +32,24 @@ test("fresh Pi runtime publishes all TAKT control tools and replace schema", () 
     "takt_project_setup",
     "takt_read_screen",
     "takt_resume_run",
+    "takt_run_workflow",
     "takt_send_input",
     "takt_set_mode",
     "takt_stop",
     "takt_submit_go",
   ]);
   assert.equal(tools.get("takt_exec_prompt").parameters.properties.replace.type, "boolean");
+  assert.equal(tools.get("takt_run_workflow").parameters.properties.workflow.type, "string");
+  assert.equal(tools.get("takt_run_workflow").parameters.properties.prNumber.type, "integer");
+  assert.equal(tools.get("takt_run_workflow").parameters.properties.extensions.type, "array");
+  assert.equal(tools.get("takt_run_workflow").parameters.properties.pipeline.type, "boolean");
   assert.ok(tools.get("takt_exec_prompt").parameters.properties.goMode.anyOf);
   assert.equal(tools.get("takt_stop").parameters.properties.forceObserved.type, "boolean");
   assert.equal(tools.get("takt_resume_run").parameters.properties.model.type, "string");
   assert.equal(tools.get("takt_project_setup").parameters.properties.cwd.type, "string");
   assert.equal(tools.get("takt_project_setup").parameters.properties.copyGlobalPreset.type, "boolean");
+  assert.ok(shortcuts.includes("ctrl+alt+t"));
+  assert.ok(shortcuts.includes("f6"));
 });
 
 test("fresh Pi loader exposes the executable tool schema", async () => {
@@ -55,6 +65,7 @@ test("fresh Pi loader exposes the executable tool schema", async () => {
     "takt_project_setup",
     "takt_read_screen",
     "takt_resume_run",
+    "takt_run_workflow",
     "takt_send_input",
     "takt_set_mode",
     "takt_stop",
@@ -65,6 +76,10 @@ test("fresh Pi loader exposes the executable tool schema", async () => {
   assert.equal(execTool.parameters.properties.replace.type, "boolean");
   assert.ok(execTool.parameters.properties.goMode.anyOf);
   assert.ok(execTool.parameters.required.includes("prompt"));
+  const workflowTool = tools.get("takt_run_workflow").definition;
+  assert.equal(workflowTool.parameters.required.includes("task"), false);
+  assert.equal(workflowTool.parameters.required.includes("prNumber"), false);
+  assert.ok(workflowTool.parameters.required.includes("workflow"));
   const setupTool = tools.get("takt_project_setup").definition;
   assert.equal(setupTool.parameters.properties.cwd.type, "string");
   assert.equal(setupTool.parameters.properties.copyGlobalPreset.type, "boolean");

@@ -17,8 +17,12 @@ export interface TaktQueueFlushResult {
  * Per-project buffer for input typed while the bridge-owned TAKT session
  * cannot accept it. Order is preserved; destructive lines are never auto-sent.
  */
-export function createTaktInputQueue() {
-  const items: TaktQueuedInput[] = [];
+export function createTaktInputQueue(
+  initialItems: readonly TaktQueuedInput[] = [],
+  onChange?: (items: readonly TaktQueuedInput[]) => void,
+) {
+  const items: TaktQueuedInput[] = initialItems.map((item) => ({ ...item }));
+  const changed = (): void => onChange?.(items.map((item) => ({ ...item })));
   return {
     depth(): number {
       return items.length;
@@ -29,6 +33,7 @@ export function createTaktInputQueue() {
         return items.length;
       }
       items.push({ text: normalized, queuedAt: new Date().toISOString() });
+      changed();
       return items.length;
     },
     /**
@@ -40,6 +45,7 @@ export function createTaktInputQueue() {
       const held = items.filter((item) => isDestructiveTaktAutoInput(item.text));
       items.length = 0;
       items.push(...held);
+      changed();
       const batch = sendable.length > 0 ? sendable.map((item) => item.text).join("\n") : undefined;
       return {
         ...(batch !== undefined ? { batch } : {}),
@@ -49,6 +55,15 @@ export function createTaktInputQueue() {
     },
     clearAll(): void {
       items.length = 0;
+      changed();
+    },
+    snapshot(): readonly TaktQueuedInput[] {
+      return items.map((item) => ({ ...item }));
+    },
+    restore(nextItems: readonly TaktQueuedInput[]): void {
+      items.length = 0;
+      items.push(...nextItems.map((item) => ({ ...item })));
+      changed();
     },
   };
 }
