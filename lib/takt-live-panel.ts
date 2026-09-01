@@ -16,6 +16,7 @@ import { workflowLabel } from "./takt-progress.ts";
 import { t, taktLang } from "./takt-i18n.ts";
 import {
   hasTaktSummaryActivity,
+  isTaktSessionHistoryVisible,
   type TaktRunSnapshot,
   type TaktSummary,
 } from "./takt-types.ts";
@@ -533,13 +534,15 @@ function isActiveRunState(run: Pick<TaktRunSnapshot, "status" | "sessionStatus">
 
 /**
  * Run outcome retention: a finished run's success/failure row stays visible
- * in this session-owned widget until the project's next run starts or the Pi
- * session ends. Completed and failed stages are retained. A manually stopped
- * session hides immediately — the user already knows it stopped, and it must
- * never be mistaken for a successful ✅ run.
+ * in this session-owned widget for the recent-history window. A manually
+ * stopped session hides immediately — the user already knows it stopped, and
+ * it must never be mistaken for a successful ✅ run.
  */
 function isDisplayableProject(project: TaktProjectWidgetEntry, now: number): boolean {
   if (project.stage === "stopped") {
+    return false;
+  }
+  if (!project.runner?.isRunning && project.summary !== undefined && !isTaktSessionHistoryVisible(project.summary, now)) {
     return false;
   }
   return Boolean(

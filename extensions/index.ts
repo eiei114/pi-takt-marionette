@@ -66,6 +66,7 @@ import {
 import {
   formatTaktLastExit,
   hasRecentTaktSummaryActivity,
+  isTaktSessionHistoryVisible,
   type TaktLastExit,
   type TaktSessionStatus,
   type TaktSummary,
@@ -519,8 +520,24 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   /** Labels + cwd for @ mention completion over known sessions. */
   private sessionCompletionEntries(): Array<{ label: string; cwd: string }> {
     return [...this.projects.values()]
-      .filter((project) => project.runner.hasSession || project.runner.isRunning || project.summary !== undefined)
+      .filter((project) => this.isSessionHistoryVisible(project))
       .map((project) => ({ label: project.label, cwd: project.cwd }));
+  }
+
+  /**
+   * Keep session selectors useful without letting old terminal outcomes become
+   * permanent history. Live PTYs and summaries with active queue work stay
+   * visible; completed/stale summaries expire by their latest activity time.
+   */
+  private isSessionHistoryVisible(project: ManagedProject, now = Date.now()): boolean {
+    if (project.runner.isRunning) {
+      return true;
+    }
+    if (project.summary !== undefined) {
+      return isTaktSessionHistoryVisible(project.summary, now);
+    }
+    // A session can be attached before its first metadata refresh completes.
+    return project.runner.hasSession;
   }
 
   async enqueueTask(
@@ -2424,7 +2441,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     const project = await this.selectProject(
       args,
       "Peek TAKT session",
-      () => true,
+      (candidate) => this.isSessionHistoryVisible(candidate),
     );
     if (!project) {
       return;
@@ -2439,7 +2456,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       return;
     }
     const sessions = [...this.projects.values()]
-      .filter((project) => project.runner.hasSession || project.runner.isRunning || project.summary !== undefined)
+      .filter((project) => this.isSessionHistoryVisible(project))
       .sort(compareManagedProjectsForMenu);
     if (sessions.length === 0) {
       context.ui.notify("🎭 TAKT · no sessions yet. Start one with /takt:start or /takt:exec.", "info");
@@ -2509,7 +2526,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   /** Every known session as (project, widget entry) pairs, most active first. */
   sessionPairs(): Array<{ project: ManagedProject; entry: TaktProjectWidgetEntry }> {
     const pairs = [...this.projects.values()]
-      .filter((project) => project.runner.hasSession || project.runner.isRunning || project.summary !== undefined)
+      .filter((project) => this.isSessionHistoryVisible(project))
       .map((project) => ({
         project,
         entry: {
@@ -2538,6 +2555,9 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     // never does.
     return [...this.projects.values()].some((project) => {
       if (project.stage === "stopped") {
+        return false;
+      }
+      if (!project.runner.isRunning && project.summary !== undefined && !isTaktSessionHistoryVisible(project.summary)) {
         return false;
       }
       return (
@@ -3431,11 +3451,35 @@ async function waitForFreshTerminalOutput(
 
 export default function register(pi: ExtensionAPI): void {
   let runtime: TaktBridgeRuntime | undefined;
+  let terminalInputUnsubscribe: (() => void) | undefined;
+
+  const installTerminalInputInterceptor = (context: ExtensionContext): void => {
+    terminalInputUnsubscribe?.();
+    terminalInputUnsubscribe = undefined;
+    if (!context.hasUI) {
+      return;
+    }
+    // registerShortcut handles Pi's editor keymap, but terminals on macOS can
+    // emit Ctrl+Option+T as raw bytes that never reach that matcher. Install
+    // the same adapter at the terminal boundary and consume only its known
+    // mode-cycle sequences so every other byte keeps normal TUI behavior.
+    terminalInputUnsubscribe = context.ui.onTerminalInput((data) => {
+      if (TAKT_KEYBOARD.match(data) !== "cycle-input-mode") {
+        return undefined;
+      }
+      void runtime?.cycleInputMode();
+      return { consume: true };
+    });
+  };
+
   const getRuntime = async (context: ExtensionContext): Promise<TaktBridgeRuntime> => {
     if (!runtime) {
       runtime = new TaktBridgeRuntime(context.cwd);
     }
     runtime.attach(context);
+    if (terminalInputUnsubscribe === undefined) {
+      installTerminalInputInterceptor(context);
+    }
     await runtime.initialize();
     return runtime;
   };
@@ -3916,22 +3960,29 @@ export default function register(pi: ExtensionAPI): void {
         );
         return;
       }
+      terminalInputUnsubscribe?.();
+      terminalInputUnsubscribe = undefined;
     }
 
     const nextRuntime = new TaktBridgeRuntime(context.cwd);
     nextRuntime.attach(context);
     runtime = nextRuntime;
+    installTerminalInputInterceptor(context);
     await nextRuntime.initialize();
   });
 
   pi.on("session_shutdown", async (event, context) => {
     const activeRuntime = runtime;
     if (!activeRuntime) {
+      terminalInputUnsubscribe?.();
+      terminalInputUnsubscribe = undefined;
       return;
     }
     try {
       await activeRuntime.shutdown({ preserveRuns: event.reason === "reload" });
       runtime = undefined;
+      terminalInputUnsubscribe?.();
+      terminalInputUnsubscribe = undefined;
     } catch (error) {
       activeRuntime.attach(context);
       context.ui.notify(

@@ -53,7 +53,30 @@ test("isCtrlAltTSequence recognises raw shortcut encodings and rejects other byt
 
 test("isTaktModeCycleSequence recognises the portable F6 terminal sequence", () => {
   assert.equal(isTaktModeCycleSequence("\u001b[17~"), true);
+  assert.equal(isTaktModeCycleSequence("\u001b[17;1~", "darwin"), true);
+  assert.equal(isTaktModeCycleSequence("\u001b[17;1u", "darwin"), true);
   assert.equal(isTaktModeCycleSequence("\u001b[B"), false);
+});
+
+test("session history expires quiet finished activity after three days", async () => {
+  const { isTaktSessionHistoryVisible } = await import("../lib/takt-types.ts");
+  const now = Date.parse("2026-09-01T00:00:00.000Z");
+  const finished = {
+    cwd: "/repo",
+    status: "completed",
+    running: 0,
+    pending: 0,
+    blocked: 0,
+    failed: 0,
+    completed: 1,
+    stale: 0,
+    activityAt: "2026-08-30T23:59:59.000Z",
+    runs: [],
+  };
+  assert.equal(isTaktSessionHistoryVisible(finished, now), true);
+  assert.equal(isTaktSessionHistoryVisible(finished, now + 2 * 86_400_000), false);
+  assert.equal(isTaktSessionHistoryVisible({ ...finished, running: 1 }, now + 10 * 86_400_000), true);
+  assert.equal(isTaktSessionHistoryVisible({ ...finished, pending: 1 }, now + 10 * 86_400_000), true);
 });
 
 test("keyboard adapter keeps Windows behavior and gives macOS a clear F6 hint", () => {

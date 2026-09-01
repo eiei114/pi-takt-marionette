@@ -871,15 +871,17 @@ function findLatestActivityAt(
 ): string | undefined {
   const timestamps = [
     ...runs
-      .filter((run) => run.status === "running" || run.status === "failed" || run.status === "stale")
       .flatMap((run) => [run.endTime, run.updatedAt, run.startTime]),
     ...taskItems
       .filter((item) =>
         item.kind === "pending" ||
+        item.kind === "queued" ||
+        item.kind === "starting" ||
         item.kind === "running" ||
         item.kind === "blocked" ||
         item.kind === "failed" ||
-        item.kind === "exceeded",
+        item.kind === "exceeded" ||
+        item.kind === "completed",
       )
       .flatMap((item) => [item.completedAt, item.startedAt, item.createdAt]),
   ]

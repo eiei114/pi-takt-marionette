@@ -13,6 +13,7 @@ import test from "node:test";
 import register from "../extensions/index.ts";
 
 const ESC = "\u001b";
+const CTRL_ALT_T = `${ESC}\u0014`;
 const CTRL_ALT_UP = `${ESC}[1;7A`;
 const CTRL_ALT_DOWN = `${ESC}[1;7B`;
 
@@ -155,6 +156,7 @@ async function setupFocusHarness(projectA, projectB) {
   const notifications = [];
   const statuses = [];
   let activeCustom = null;
+  let terminalInputHandler;
   let editorResponses = [];
   const fakeTui = {
     requestRender() {},
@@ -175,8 +177,13 @@ async function setupFocusHarness(projectA, projectB) {
         statuses.push({ key, value });
       },
       setWidget() {},
-      onTerminalInput() {
-        return () => {};
+      onTerminalInput(handler) {
+        terminalInputHandler = handler;
+        return () => {
+          if (terminalInputHandler === handler) {
+            terminalInputHandler = undefined;
+          }
+        };
       },
       select: async (_title, choices) => choices[0],
       confirm: async () => true,
@@ -212,6 +219,9 @@ async function setupFocusHarness(projectA, projectB) {
     statuses,
     readLog,
     getActiveCustom: () => activeCustom,
+    sendTerminalInput(data) {
+      return terminalInputHandler?.(data);
+    },
     setActiveCustom(value) {
       activeCustom = value;
     },
@@ -334,6 +344,28 @@ test("Esc leaves fullscreen focus and returns to PI without forwarding", async (
     assert.ok(await waitFor(() => harness.getActiveCustom() === null));
     assert.ok(harness.notifications.some((entry) => entry.message.includes("Left TAKT focus")));
     assert.ok(harness.statuses.some((entry) => entry.key.includes("input-mode") && entry.value === undefined));
+  } finally {
+    await harness.shutdown();
+  }
+});
+
+test("raw macOS Ctrl+Option+T input cycles mode before the Pi editor", async () => {
+  const projectA = join(mkdtempSync(join(tmpdir(), "pi-takt-shortcut-a-")), "alpha");
+  const harness = await setupFocusHarness(projectA, undefined);
+  try {
+    await runCommand(harness.commands, "takt:start", "alpha", harness.context);
+    assert.ok(await waitFor(() => harness.readLog(projectA).includes("run-start")));
+
+    // macOS terminals can emit ESC + Ctrl-T; Pi's registered shortcut matcher
+    // does not see this legacy raw sequence in kitty-compatible mode.
+    assert.deepEqual(harness.sendTerminalInput(CTRL_ALT_T), { consume: true });
+    assert.ok(await waitFor(() => harness.getActiveCustom() !== null));
+
+    // The same boundary listener cycles back and consumes the sequence while
+    // the fullscreen view owns focus too.
+    assert.deepEqual(harness.sendTerminalInput(CTRL_ALT_T), { consume: true });
+    assert.ok(await waitFor(() => harness.getActiveCustom() === null));
+    assert.equal(harness.sendTerminalInput("x"), undefined);
   } finally {
     await harness.shutdown();
   }

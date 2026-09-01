@@ -292,6 +292,25 @@ test("readTaktSummary uses TAKT_COMMAND and preserves live task metadata", async
   }
 });
 
+test("readTaktSummary records completed run activity for session history", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-completed-age-"));
+  const runRoot = join(cwd, ".takt", "runs", "completed-run");
+  mkdirSync(runRoot, { recursive: true });
+  const completedAt = "2026-08-14T00:30:00.000Z";
+  writeFileSync(join(runRoot, "meta.json"), JSON.stringify({
+    ...validMeta,
+    runRoot,
+    runSlug: "completed-run",
+    status: "completed",
+    endTime: completedAt,
+    updatedAt: completedAt,
+  }));
+
+  const summary = await readTaktSummary(cwd, { includeTaskList: false });
+  assert.equal(summary.completed, 1);
+  assert.equal(summary.activityAt, completedAt);
+});
+
 test("readTaktSummary records pending task creation as observed activity", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-pending-age-"));
   const command = createTaskListCommand(cwd, JSON.stringify({

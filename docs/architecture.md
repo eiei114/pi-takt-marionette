@@ -125,7 +125,9 @@ Pi command / project path
   `pi-auto` (Pi may send allowed follow-ups). Windows keeps `Ctrl+Alt+T`;
   macOS displays `Ctrl+Option+T` as the compatibility label. The adapter
   normalizes terminal bytes before they reach the platform-neutral mode state
-  machine, and unknown bytes pass through unchanged.
+  machine. A raw terminal-input interceptor backs up the registered shortcut
+  for macOS terminal encodings that bypass Pi's editor key matcher; unknown
+  bytes pass through unchanged.
   A successful `takt_exec_prompt` enters `pi-auto` automatically. Destructive
   auto actions still require confirmation. External status cards are never
   writable. Stop retries are bounded; a timeout is returned as an explicit
@@ -151,6 +153,11 @@ Pi command / project path
   or run timestamp. Non-running cards disappear after 30 minutes without new
   activity, but the bridge never mutates `.takt/tasks.yaml` or run history as
   part of that display cleanup.
+- Session-owned history uses a separate three-day presentation window. Running,
+  pending, and blocked work remains visible; completed, failed, stale, and
+  aborted history older than three days is omitted from session selectors and
+  retained outcome rows. This is filtering only: persisted task and run records
+  remain available to explicit diagnostics.
 - The macOS PTY preflight repairs `node-pty` `spawn-helper` permissions during
   install and again in the detached broker, resolving both package-local and
   hoisted npm dependency layouts. This keeps the global `takt` executable as

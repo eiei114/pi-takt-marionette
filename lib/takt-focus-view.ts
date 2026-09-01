@@ -354,7 +354,11 @@ export class TaktFullscreenFocusView {
     }
     const others = Math.max(0, this.eligibleSessions.length - 1);
     const header = formatPinnedHeader(pinned, others, columns);
-    const footer = truncateToWidth("esc back to Pi · ctrl+alt+↑/↓ switch session · ctrl+alt+t modes", columns);
+    const modeShortcut = this.keyboard.compatibilityShortcut.toLocaleLowerCase();
+    const footer = truncateToWidth(
+      `esc back to Pi · ctrl+alt+↑/↓ switch session · ${modeShortcut} modes`,
+      columns,
+    );
 
     const bodyRows = rows - 2;
     let body: string[];

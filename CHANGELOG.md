@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Hide non-running session history after three days without activity from
+  selectors and retained widget rows, without deleting `.takt` task or run
+  metadata. Running, pending, and blocked work remains visible.
+- Fix macOS mode cycling when `Ctrl+Option+T` arrives as raw terminal input,
+  and recognize modifier-bearing Fn+F6 encodings.
+
 ## 0.6.0 - 2026-09-01
 
 - Add a platform keyboard adapter for dual-input mode. `F6` remains the
