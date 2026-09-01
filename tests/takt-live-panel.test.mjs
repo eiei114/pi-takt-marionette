@@ -317,6 +317,32 @@ test("project stack retains run outcomes: stopped hides, completed and failed st
   assert.ok(failed.every((line) => !line.includes("failure reason")), String(failed));
 });
 
+test("project stack hides finished session history after three days", () => {
+  const now = Date.parse("2026-09-01T00:00:00.000Z");
+  const lines = renderTaktProjectStack([{
+    id: "old",
+    label: "old",
+    cwd: "C:/old",
+    runner: { terminal: undefined, hasSession: true, isRunning: false, resize() {} },
+    stage: "completed",
+    summary: {
+      cwd: "C:/old",
+      status: "completed",
+      running: 0,
+      pending: 0,
+      blocked: 0,
+      failed: 0,
+      completed: 1,
+      stale: 0,
+      activityAt: "2026-08-28T23:59:59.000Z",
+      runs: [],
+    },
+  }], 80, "pi", { now });
+
+  assert.ok(lines.every((line) => !line.includes("old")), String(lines));
+  assert.ok(lines.some((line) => line.includes("no active sessions")));
+});
+
 test("project stack shows the completion duration on the retained success row", () => {
   const now = Date.parse("2026-08-20T00:12:00.000Z");
   const lines = renderTaktProjectStack([{

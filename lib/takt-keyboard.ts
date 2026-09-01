@@ -39,7 +39,9 @@ export function isCtrlAltTSequence(data: string): boolean {
 }
 
 export function isF6Sequence(data: string): boolean {
-  return matchesKey(data, Key.f6);
+  // Pi's key matcher handles the legacy `ESC[17~` form. Some macOS terminal
+  // profiles emit the equivalent modifier-bearing form for Fn+F6 instead.
+  return matchesKey(data, Key.f6) || /^\u001b\[17;1(?:~|u)$/.test(data);
 }
 
 export interface TaktKeyboardAdapter {

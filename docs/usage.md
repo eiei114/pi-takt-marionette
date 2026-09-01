@@ -245,6 +245,15 @@ elapsed clock, heartbeat/spinner). `↑`/`↓` move between sessions,
 list refreshes once a second while open, so you can watch a workflow advance
 without staring at the raw PTY.
 
+### Session history visibility
+
+`@` completion, `/takt:live`, `/takt:sessions`, `/takt:inspect`, and retained
+non-running widget rows show activity from the latest three days. Running,
+pending, and blocked work stays visible. Older completed, failed, stale, or
+aborted history is hidden from these presentation surfaces only.
+`.takt/tasks.yaml` and `.takt/runs/` are not deleted; use `/takt:status [path]` or
+`takt_read_screen` for explicit diagnostics.
+
 ## Queued input while executing
 
 Input typed while the workflow is executing no longer vanishes. Lines from
@@ -297,7 +306,9 @@ The mode-cycle shortcut uses a platform keyboard adapter at the raw terminal
 input boundary. The input-mode state machine remains platform-neutral. `F6` is
 the primary shortcut on every OS; macOS displays `F6 / Fn+F6` because Mac
 function keys may be configured as media keys. Unknown terminal bytes pass
-through unchanged.
+through unchanged. macOS terminals that encode `Ctrl+Option+T` as raw
+`ESC` + `Ctrl-T` are handled at the same boundary, so the shortcut still
+cycles when Pi's editor keymap does not recognize that encoding.
 
 The bridge defaults to the globally installed `takt` command. It does not
 require a local TAKT checkout or per-session PATH setup. Before starting a

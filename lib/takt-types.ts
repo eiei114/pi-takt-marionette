@@ -18,6 +18,9 @@ export type TaktSessionStatus = (typeof TAKT_SESSION_STATUSES)[number];
 /** Hide observed, non-running activity after it has been quiet for this long. */
 export const DEFAULT_OBSERVED_INACTIVITY_TTL_MS = 30 * 60 * 1_000;
 
+/** Hide non-running session history after three days without new activity. */
+export const DEFAULT_SESSION_HISTORY_INACTIVITY_TTL_MS = 3 * 24 * 60 * 60 * 1_000;
+
 export interface TaktLastExit {
   code?: number;
   signal?: number;
@@ -167,6 +170,35 @@ export function hasRecentTaktSummaryActivity(
     return false;
   }
   if (summary.running > 0) {
+    return true;
+  }
+  if (!summary.activityAt) {
+    return true;
+  }
+  const activityAt = Date.parse(summary.activityAt);
+  if (!Number.isFinite(activityAt)) {
+    return true;
+  }
+  return now - activityAt < ttlMs;
+}
+
+/**
+ * Decide whether a session belongs in history-oriented UI surfaces.
+ *
+ * Live queue work remains visible regardless of its last timestamp. Finished
+ * or stale history expires after the configured inactivity window. A missing
+ * or malformed timestamp fails open for summaries produced by older TAKT
+ * versions; the bridge never deletes the underlying run or task metadata.
+ */
+export function isTaktSessionHistoryVisible(
+  summary: TaktSummary | undefined,
+  now = Date.now(),
+  ttlMs = DEFAULT_SESSION_HISTORY_INACTIVITY_TTL_MS,
+): boolean {
+  if (!summary) {
+    return false;
+  }
+  if (summary.running > 0 || summary.pending > 0 || summary.blocked > 0) {
     return true;
   }
   if (!summary.activityAt) {

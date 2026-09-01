@@ -199,11 +199,21 @@ it never deletes TAKT tasks or run history automatically. The bridge only stops
 PTYs it created, and bounded stop failures are reported instead of retried
 indefinitely.
 
+Session selectors (`@` completion, `/takt:live`, `/takt:sessions`, and
+`/takt:inspect`) plus retained non-running widget rows show history with latest
+activity within three days. Running, pending, and blocked work stays visible.
+Older completed, failed, stale, or aborted history is hidden from these
+presentation surfaces;
+the underlying `.takt` task and run records are never deleted and remain
+available through explicit diagnostics.
+
 Default mode keeps Pi focused. Use `F6` (`Fn+F6` on Mac keyboards configured
 for media keys), `/takt:mode`, or the compatibility shortcut when you want
 direct TAKT focus or Pi-auto follow-ups. macOS validation targets Apple
 Terminal and iTerm2; the widget labels the compatibility shortcut as
-`Ctrl+Option+T`. Windows keeps `Ctrl+Alt+T` unchanged.
+`Ctrl+Option+T`. Marionette also intercepts the raw macOS terminal encoding at
+Pi's input boundary, so the shortcut works when the editor keymap misses it.
+Windows keeps `Ctrl+Alt+T` unchanged.
 Registered folders and named profiles are saved outside the vault in the user
 config directory. A profile makes a folder path optional for every command:
 
