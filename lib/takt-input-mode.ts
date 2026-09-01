@@ -1,4 +1,21 @@
 import { t } from "./takt-i18n.ts";
+import {
+  getTaktModeCompatibilityShortcutLabel,
+  getTaktModeShortcutLabel,
+} from "./takt-keyboard.ts";
+
+export {
+  createTaktKeyboardAdapter,
+  getTaktModeCompatibilityShortcutLabel,
+  getTaktModeShortcutLabel,
+  isCtrlAltTSequence,
+  isF6Sequence,
+  isTaktModeCycleSequence,
+  normalizeTaktKeyboardPlatform,
+  type TaktKeyboardAction,
+  type TaktKeyboardAdapter,
+  type TaktKeyboardPlatform,
+} from "./takt-keyboard.ts";
 
 export const TAKT_INPUT_MODES = ["pi", "takt", "pi-auto"] as const;
 
@@ -29,25 +46,36 @@ export function parseTaktInputMode(value: string | undefined): TaktInputMode | "
 }
 
 /** Compact widget/status label for the three-state cycle. */
-export function formatTaktInputModeLine(mode: TaktInputMode): string {
+export function formatTaktInputModeLine(
+  mode: TaktInputMode,
+  platform: NodeJS.Platform | string = process.platform,
+): string {
   // Zero jargon: the line must answer "who is typing right now?" by itself.
-  switch (mode) {
-    case "pi":
-      return t("modePi");
-    case "takt":
-      return t("modeTakt");
-    case "pi-auto":
-      return t("modeAuto");
-  }
+  const message = (() => {
+    switch (mode) {
+      case "pi":
+        return t("modePi");
+      case "takt":
+        return t("modeTakt");
+      case "pi-auto":
+        return t("modeAuto");
+    }
+  })();
+  return `${message} · ${t("modeCycleHint", { shortcut: getTaktModeShortcutLabel(platform) })}`;
 }
 
 /** Human-readable mode description for notifications. */
-export function describeTaktInputMode(mode: TaktInputMode): string {
+export function describeTaktInputMode(
+  mode: TaktInputMode,
+  platform: NodeJS.Platform | string = process.platform,
+): string {
+  const cycleShortcut = getTaktModeShortcutLabel(platform);
+  const compatibilityShortcut = getTaktModeCompatibilityShortcutLabel(platform);
   switch (mode) {
     case "pi":
       return "Pi editor focus; TAKT input only via /takt:send or tools";
     case "takt":
-      return "TAKT fullscreen focus; keys go to the pinned bridge-owned PTY (Esc returns to Pi, Ctrl+Alt+T cycles)";
+      return `TAKT fullscreen focus; keys go to the pinned bridge-owned PTY (Esc returns to Pi; switch back with ${cycleShortcut}, /takt:mode, or ${compatibilityShortcut})`;
     case "pi-auto":
       return "Pi-auto; Pi may send allowed follow-ups to the active bridge-owned PTY";
   }
@@ -66,16 +94,4 @@ export function isDestructiveTaktAutoInput(text: string): boolean {
     return true;
   }
   return DESTRUCTIVE_AUTO_INPUT.test(trimmed);
-}
-
-/**
- * Raw terminal encodings of Ctrl+Alt+T that reach the extension interceptor:
- * the classic ESC-prefixed control byte (ESC + 0x14) and CSI-u variants
- * (modifyOtherKeys / Kitty) some terminals emit instead.
- */
-export function isCtrlAltTSequence(data: string): boolean {
-  if (data === "\u001b\u0014") {
-    return true;
-  }
-  return /^\u001b\[(?:27;7t|20;7t|27;7u|20;7u)$/.test(data);
 }

@@ -4,8 +4,14 @@ import {
   cycleTaktInputMode,
   formatTaktInputModeLine,
   isDestructiveTaktAutoInput,
+  isTaktModeCycleSequence,
   parseTaktInputMode,
 } from "../lib/takt-input-mode.ts";
+import {
+  createTaktKeyboardAdapter,
+  getTaktModeCompatibilityShortcutLabel,
+  getTaktModeShortcutLabel,
+} from "../lib/takt-keyboard.ts";
 
 test("cycleTaktInputMode rotates pi → takt → pi-auto → pi", () => {
   assert.equal(cycleTaktInputMode("pi"), "takt");
@@ -37,8 +43,30 @@ test("isDestructiveTaktAutoInput gates clear/stop style follow-ups", () => {
 test("isCtrlAltTSequence recognises raw shortcut encodings and rejects other bytes", async () => {
   const { isCtrlAltTSequence } = await import("../lib/takt-input-mode.ts");
   assert.equal(isCtrlAltTSequence("\u001b\u0014"), true); // ESC + Ctrl+T
-  assert.equal(isCtrlAltTSequence("\u001b[27;7t"), true); // modifyOtherKeys CSI-t
-  assert.equal(isCtrlAltTSequence("\u001b[20;7u"), true); // Kitty CSI-u
+  assert.equal(isCtrlAltTSequence("\u001b[27;7;116~"), true); // modifyOtherKeys
+  assert.equal(isCtrlAltTSequence("\u001b[116;7u"), true); // Kitty CSI-u
+  assert.equal(isCtrlAltTSequence("\u001b[27;7t"), false); // truncated modifyOtherKeys
+  assert.equal(isCtrlAltTSequence("\u001b[20;7u"), false); // wrong Kitty codepoint
   assert.equal(isCtrlAltTSequence("\u001b[B"), false); // plain down arrow
   assert.equal(isCtrlAltTSequence("x"), false);
+});
+
+test("isTaktModeCycleSequence recognises the portable F6 terminal sequence", () => {
+  assert.equal(isTaktModeCycleSequence("\u001b[17~"), true);
+  assert.equal(isTaktModeCycleSequence("\u001b[B"), false);
+});
+
+test("keyboard adapter keeps Windows behavior and gives macOS a clear F6 hint", () => {
+  const windows = createTaktKeyboardAdapter("win32");
+  const macos = createTaktKeyboardAdapter("darwin");
+
+  assert.equal(getTaktModeShortcutLabel("win32"), "F6");
+  assert.equal(getTaktModeCompatibilityShortcutLabel("win32"), "Ctrl+Alt+T");
+  assert.equal(getTaktModeShortcutLabel("darwin"), "F6 / Fn+F6");
+  assert.equal(getTaktModeCompatibilityShortcutLabel("darwin"), "Ctrl+Option+T");
+  assert.equal(windows.match("\u001b[17~"), "cycle-input-mode");
+  assert.equal(macos.match("\u001b[17~"), "cycle-input-mode");
+  assert.equal(macos.match("x"), undefined);
+  assert.match(formatTaktInputModeLine("pi", "darwin"), /F6 \/ Fn\+F6/);
+  assert.match(formatTaktInputModeLine("pi", "win32"), /cycle: F6/);
 });

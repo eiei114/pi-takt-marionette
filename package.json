@@ -1,6 +1,6 @@
 {
   "name": "pi-takt-marionette",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Run and monitor TAKT projects in stacked live terminal widgets inside Pi.",
   "type": "module",
   "license": "MIT",

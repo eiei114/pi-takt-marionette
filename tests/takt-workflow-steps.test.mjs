@@ -95,6 +95,8 @@ test("resolveWorkflowFile prefers project over user and builtin layers", async (
   mkdirSync(join(project, ".takt", "workflows"), { recursive: true });
   writeFileSync(join(builtinDir, "dual.yaml"), "name: dual\nsteps: []\n");
   writeFileSync(join(project, ".takt", "workflows", "dual.yml"), "name: dual\nsteps: []\n");
+  const previousConfigDir = process.env.TAKT_CONFIG_DIR;
+  process.env.TAKT_CONFIG_DIR = join(project, "empty-takt-config");
   resetTaktRootCache();
   try {
     const resolved = await resolveWorkflowFile(project, "dual", join(fakeTaktRoot, "bin", "takt"));
@@ -107,6 +109,11 @@ test("resolveWorkflowFile prefers project over user and builtin layers", async (
     const builtinHit = await resolveWorkflowFile(project, "flow-builtin", join(fakeTaktRoot, "bin", "takt"));
     assert.equal(builtinHit?.layer, "builtin");
   } finally {
+    if (previousConfigDir === undefined) {
+      delete process.env.TAKT_CONFIG_DIR;
+    } else {
+      process.env.TAKT_CONFIG_DIR = previousConfigDir;
+    }
     resetTaktRootCache();
     rmSync(project, { recursive: true, force: true });
   }

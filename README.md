@@ -28,6 +28,15 @@ when counts are all zero during startup, only the current project gets a
 compact `preparing` card. Final diagnostics remain available through
 `/takt:status` and `takt_read_screen`.
 
+Bridge-owned PTYs run in a detached local broker. Pi `/reload` disconnects
+only the extension client; the replacement extension reconnects to the same
+PID, replays the bounded terminal transcript into xterm, and restores raw
+screen inspection, execution stage, queued input, and control. Broker discovery
+uses a mode-0700 per-user runtime directory plus an authenticated mode-0600
+descriptor/socket. A real Pi shutdown still stops the owned process and broker;
+an ownerless live broker also self-stops after a bounded reconnect lease. PTYs
+started outside Marionette remain metadata-only.
+
 ## Prerequisites
 
 - Pi 0.83 or later
@@ -35,8 +44,9 @@ compact `preparing` card. Final diagnostics remain available through
 - A configured TAKT provider/model
 - On macOS, `node-pty` may need Xcode Command Line Tools when a matching
   native prebuild is unavailable (`xcode-select --install`). Fresh installs
-  also need executable `spawn-helper` bits; this package chmods them in
-  `postinstall` (otherwise macOS can fail with `posix_spawnp failed`).
+  also need executable `spawn-helper` bits; this package repairs them during
+  install and again before a broker-owned PTY starts (otherwise macOS can fail
+  with `posix_spawnp failed`).
 
 ## Install
 
@@ -76,7 +86,7 @@ pi -e .
 | `/takt:clear [path]` | Clear the selected project's previous TAKT exec session |
 | `/takt:exec [path]` | Start a fresh interactive `takt exec` PTY in a selected folder |
 | `/takt:send [path]` | Paste multiline input into a bridge-owned interactive TAKT session |
-| `/takt:mode [pi\|takt\|pi-auto]` | Cycle or set dual-input mode (`Ctrl+Alt+T`) |
+| `/takt:mode [pi\|takt\|pi-auto]` | Cycle or set dual-input mode (`F6`; macOS `Fn+F6`, compatibility `Ctrl+Option+T`) |
 | `/takt:session previous\|next` | Switch fullscreen focus to the previous/next running session (same ordering as `Ctrl+Alt+↑/↓`) |
 | `/takt:stop [path]` | Confirm and interrupt a TAKT process started by Pi |
 | `/takt:status` | Open the optional diagnostic state overlay (includes bounded NDJSON log details when run logs exist) |
@@ -88,8 +98,8 @@ concrete next action, and hands off to the owning Skill. It
 uses dedicated preflight phase Skills for intake, project setup, workflow
 selection, enqueue verification, and the final run-intent gate. These phases
 cover everything up to execution; none starts `takt run` without explicit user
-intent.
-prepares the exact project, reads TAKT's effective standalone workflow catalog
+intent. The orchestrator prepares the exact project, reads TAKT's effective
+standalone workflow catalog
 (project > user-global > builtin), and shows a category/search workflow choice
 on every fresh route. Builtin enable/ignore settings are respected; callable
 and internal helpers are excluded. Catalog failure is fail-closed: no silent
@@ -118,6 +128,13 @@ available. If a fresh Pi runtime is missing one of these tools or the named
 profile does not resolve to the requested cwd, the skill reports the exact
 reload/package or profile/cwd mismatch instead of guessing a path.
 
+Exact builtin or project workflows use `takt_run_workflow`. The tool forwards
+the workflow, task or native PR number, provider/model, repository, and PR
+options as discrete TAKT CLI arguments while retaining bridge-owned PTY output.
+`prNumber` maps to TAKT's `--pr` input so review comments, base/head refs, and
+the existing PR branch remain structured execution context. Optional Pi
+extensions are injected into that child run only and do not modify Pi settings.
+
 For approval-gated execution, pass `goMode: "manual"`. The bridge submits the
 task, waits for TAKT to return to a fresh `Assistant>` prompt, and returns with
 `awaitingGo: true` without sending `/go`. After reviewing the live screen, call
@@ -139,7 +156,8 @@ leaving Pi:
   its raw PTY in a full-terminal view while your keys go only to that session.
   With one running session it pins automatically; with several, pick one first
   (current cwd is highlighted but Enter still confirms). `Esc` returns to Pi,
-  `Ctrl+C` reaches TAKT unchanged, and `Ctrl+Alt+T` still cycles modes
+  `Ctrl+C` reaches TAKT unchanged, and `F6` (macOS `Fn+F6`) or the
+  compatibility shortcut (`Ctrl+Alt+T`, macOS `Ctrl+Option+T`) cycles modes
   (intercepted before TAKT sees it).
 - Input typed programmatically while a workflow is executing is queued
   (`⏳q3` on the row) and flushed automatically when the session is ready, or
@@ -181,8 +199,11 @@ it never deletes TAKT tasks or run history automatically. The bridge only stops
 PTYs it created, and bounded stop failures are reported instead of retried
 indefinitely.
 
-Default mode keeps Pi focused. Use `/takt:mode` or `Ctrl+Alt+T` when you want
-direct TAKT focus or Pi-auto follow-ups.
+Default mode keeps Pi focused. Use `F6` (`Fn+F6` on Mac keyboards configured
+for media keys), `/takt:mode`, or the compatibility shortcut when you want
+direct TAKT focus or Pi-auto follow-ups. macOS validation targets Apple
+Terminal and iTerm2; the widget labels the compatibility shortcut as
+`Ctrl+Option+T`. Windows keeps `Ctrl+Alt+T` unchanged.
 Registered folders and named profiles are saved outside the vault in the user
 config directory. A profile makes a folder path optional for every command:
 

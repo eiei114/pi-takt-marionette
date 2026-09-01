@@ -1,7 +1,7 @@
 import { matchesKey, Key, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Terminal as XtermTerminal } from "@xterm/headless";
 import { renderTaktTerminal } from "./takt-live-panel.ts";
-import { isCtrlAltTSequence, type TaktInputMode } from "./takt-input-mode.ts";
+import { createTaktKeyboardAdapter, type TaktInputMode } from "./takt-input-mode.ts";
 
 /**
  * One bridge-owned running TAKT session eligible for fullscreen focus.
@@ -124,6 +124,7 @@ export class TaktFullscreenFocusView {
   private readonly callbacks: TaktFocusViewCallbacks;
   private readonly unsubscribes: Array<() => void> = [];
   private readonly refreshTimer: ReturnType<typeof setInterval>;
+  private readonly keyboard = createTaktKeyboardAdapter();
   private lastColumns = 0;
   private lastBodyRows = 0;
   private exitFired = false;
@@ -248,7 +249,7 @@ export class TaktFullscreenFocusView {
       this.close("user-escape");
       return;
     }
-    if (matchesKey(data, Key.ctrlAlt("t")) || isCtrlAltTSequence(data)) {
+    if (this.keyboard.match(data) === "cycle-input-mode") {
       this.callbacks.onModeCycle();
       return;
     }

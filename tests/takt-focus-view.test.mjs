@@ -10,6 +10,7 @@ const ESC = "\u001b";
 const CTRL_C = "\u0003";
 const PASTE = `${ESC}[200~typed lines${ESC}[201~\r`;
 const CTRL_ALT_T = `${ESC}\u0014`;
+const F6 = `${ESC}[17~`;
 const CTRL_ALT_UP = `${ESC}[1;7A`;
 const CTRL_ALT_DOWN = `${ESC}[1;7B`;
 
@@ -171,6 +172,17 @@ test("Ctrl+Alt+T cycles modes and is never forwarded", () => {
   const { view, recorded } = createView([session]);
 
   view.handleInput(CTRL_ALT_T);
+
+  assert.equal(recorded.modeCycles, 1);
+  assert.deepEqual(session.writes, []);
+  assert.equal(view.currentPhase, "pinned");
+});
+
+test("F6 cycles modes while fullscreen focus owns input and is never forwarded", () => {
+  const session = createFakeSession({});
+  const { view, recorded } = createView([session]);
+
+  view.handleInput(F6);
 
   assert.equal(recorded.modeCycles, 1);
   assert.deepEqual(session.writes, []);
