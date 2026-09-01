@@ -17,8 +17,8 @@ projects in stacked live widgets inside the Pi TUI.
 
 ## Status
 
-This is an early MVP. It deliberately uses TAKT's public `takt-acp` stdio
-interface for enqueueing and runs public TAKT CLI commands inside real PTYs.
+This is an early MVP. It writes TAKT pending task files directly for enqueueing
+and runs public TAKT CLI commands inside real PTYs.
 The live widget renders TAKT's terminal screen (including in-progress output,
 ANSI control sequences, and prompts) instead of reducing bridge-owned
 execution to a status widget. It clears automatically when the bridge-owned
@@ -40,7 +40,7 @@ started outside Marionette remain metadata-only.
 ## Prerequisites
 
 - Pi 0.83 or later
-- TAKT 0.58 or later installed as the `takt` and `takt-acp` commands
+- TAKT 0.61 or later installed as the `takt` command
 - A configured TAKT provider/model
 - On macOS, `node-pty` may need Xcode Command Line Tools when a matching
   native prebuild is unavailable (`xcode-select --install`). Fresh installs
@@ -55,10 +55,12 @@ pi install npm:pi-takt-marionette
 pi install git:github.com/eiei114/pi-takt-marionette
 ```
 
-For local development:
+For local development, load the package root so Pi picks up bundled extensions
+and skills from `package.json`:
 
 ```text
-pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
+cd /path/to/pi-takt-marionette
+pi -e .
 ```
 
 ## Commands
@@ -72,7 +74,7 @@ pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
 | `/takt:inspect` | Live session inspector: ↑/↓ pick a session, see its state, Enter peeks raw screen |
 | `/takt:flush [path]` | Send queued input lines to the running TAKT session |
 | `/takt:lang [en|ja]` | Switch widget language for this session (no argument toggles) |
-| `/takt:enqueue [path]` | Ask TAKT ACP to add a worktree task in a selected folder |
+| `/takt:enqueue [path]` | Add a task after choosing worktree and PR delivery mode |
 | `/takt:project [path]` | Register another repo/folder for detection and stacked display |
 | `/takt:project:init [profile]` | Create project-local `.takt` scaffolding and register a profile |
 | `/takt:project:remove [path]` | Stop watching a registered folder |
@@ -84,26 +86,40 @@ pi -e C:/path/to/pi-takt-marionette/extensions/index.ts
 | `/takt:clear [path]` | Clear the selected project's previous TAKT exec session |
 | `/takt:exec [path]` | Start a fresh interactive `takt exec` PTY in a selected folder |
 | `/takt:send [path]` | Paste multiline input into a bridge-owned interactive TAKT session |
-| `/takt:mode [pi\|takt\|pi-auto]` | Cycle or set dual-input mode (`F6`; macOS `Fn+F6`) |
+| `/takt:mode [pi\|takt\|pi-auto]` | Cycle or set dual-input mode (`F6`; macOS `Fn+F6`, compatibility `Ctrl+Option+T`) |
+| `/takt:session previous\|next` | Switch fullscreen focus to the previous/next running session (same ordering as `Ctrl+Alt+↑/↓`) |
 | `/takt:stop [path]` | Confirm and interrupt a TAKT process started by Pi |
-| `/takt:status` | Open the optional diagnostic state overlay |
+| `/takt:status` | Open the optional diagnostic state overlay (includes bounded NDJSON log details when run logs exist) |
 
-The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. It
-asks the minimum setup/intent questions, prepares the exact project, and routes
-to `takt-pi-task-planner` or `takt-pi-runner`. The `takt_enqueue_task` agent
-tool queues a finalized task through ACP without starting execution. The
-planner uses it after a Pi-side conversation has settled goal, scope,
-non-goals, acceptance criteria, and validation; the runner remains the
-separate execution path.
+The bundled `takt-pi-orchestrator` Skill is the front door for TAKT requests. The
+`takt-pi-next-step` Skill is the ask-matt-style navigator for "what next?"
+requests: it inspects the current target/session/queue state, names one
+concrete next action, and hands off to the owning Skill. It
+uses dedicated preflight phase Skills for intake, project setup, workflow
+selection, enqueue verification, and the final run-intent gate. These phases
+cover everything up to execution; none starts `takt run` without explicit user
+intent. The orchestrator prepares the exact project, reads TAKT's effective
+standalone workflow catalog
+(project > user-global > builtin), and shows a category/search workflow choice
+on every fresh route. Builtin enable/ignore settings are respected; callable
+and internal helpers are excluded. Catalog failure is fail-closed: no silent
+`default` fallback.
 
-The bundled `takt-pi-runner` Agent Skill calls the `takt_exec_prompt` tool for
-the common issue-body → `/go` flow. Its published schema includes the `replace`
-option; the normal call passes `replace: true`. It uses the `pi-docs` profile by
-default, prefers a concise prompt, replaces a running bridge-owned session when
-needed, clears the old session, starts a fresh preset, submits `/go`, and
-switches to `pi-auto`. Raw output stays in the stacked Pi widget; long pastes
-show a truncated preview while `stage` is `pasting` / `sending_go`. Agents can
-also use `takt_stop`, `takt_resume_run`, and `takt_set_mode` for recovery.
+The normal route is **workflow selection → Pi-side planning → direct task-file enqueue →
+explicit queue/run**. `takt_enqueue_task` requires the exact `workflow: <id>`
+line plus explicit `worktree` and PR mode (`none`, `regular`, or `draft`)
+choices. It writes `.takt/tasks.yaml` and the task's `order.md`, then verifies
+the persisted workflow and delivery fields. A post-write verification failure
+leaves the pending task for inspection as unverified and blocks execution. The
+planner never runs a task. After the user explicitly asks to execute,
+`takt_run_pending` starts one bridge-owned PTY for all pending tasks through
+public `takt run`; `/takt:start` uses the same run-controller/widget lifecycle
+with its interactive confirmation.
+
+The bundled `takt-pi-runner` Agent Skill uses `takt_run_pending` for normal
+implementation. `takt_exec_prompt` remains an explicit instant/interactive
+`takt exec` path only. `takt_stop`, `takt_resume_run`, and `takt_set_mode` remain
+available for recovery. Raw output stays in the stacked Pi widget.
 `takt_resume_run` continues a checkpoint through TAKT's `Requeue` action with
 an explicit provider/model and does not clear or replay the task.
 `takt_read_screen` reports
@@ -136,8 +152,23 @@ After a session is live, dual input modes let you keep talking to TAKT without
 leaving Pi:
 
 - `pi` (default): editor stays on Pi; use `/takt:send` or tools
-- `takt`: keys go to the active bridge-owned PTY; `F6` (macOS `Fn+F6`) and the compatibility shortcut still cycle modes (intercepted before TAKT sees them), or use `/takt:mode`
-- Input typed while a workflow is executing is queued (`⏳q3` on the row) and flushed automatically when the session is ready, or via `/takt:flush`
+- `takt`: fullscreen focus — Pi pins a bridge-owned running session and shows
+  its raw PTY in a full-terminal view while your keys go only to that session.
+  With one running session it pins automatically; with several, pick one first
+  (current cwd is highlighted but Enter still confirms). `Esc` returns to Pi,
+  `Ctrl+C` reaches TAKT unchanged, and `F6` (macOS `Fn+F6`) or the
+  compatibility shortcut (`Ctrl+Alt+T`, macOS `Ctrl+Option+T`) cycles modes
+  (intercepted before TAKT sees it).
+- Input typed programmatically while a workflow is executing is queued
+  (`⏳q3` on the row) and flushed automatically when the session is ready, or
+  via `/takt:flush`; queued lines stay owned by their original project when
+  you switch focus
+- `Ctrl+Alt+↑` / `Ctrl+Alt+↓` move to the previous/next running session with
+  wraparound; each switch updates the raw display and input destination
+  atomically and prints a concise `old → new` note. If your terminal eats
+  those shortcuts, `/takt:session previous|next` does the same thing.
+- When the pinned session finishes or stops, focus closes and Pi returns to
+  `pi` mode — input is never re-targeted to another session automatically.
 - `pi-auto`: entered automatically after a successful `takt_exec_prompt`; Pi can
   inspect with `takt_read_screen` and send follow-ups with `takt_send_input`
   (destructive input still confirms)
@@ -148,8 +179,8 @@ TAKT process launched from this Pi session, with the most active first —
 
 ```
 🎭 TAKT · 3 sessions · 1 running · 2 done
-⠋ 🟢 repo-a · dual    ███▓░░░░░░░ 🔨 implement 2/3 w1/2
-✅ repo-b · default    done · 12m
+⠋ 🟢 repo-a · dual · builtin    ███▓░░░░░░░ 🔨 implement 2/3 w1/2
+✅ repo-b · review · project    done · 12m
 ```
 
 The heartbeat spinner spins at the speed of real TAKT output: fresh writes
@@ -161,7 +192,9 @@ snippet). Rows show discrete facts only — step position and parallel worker
 completion (w2/3) — instead of a synthetic progress bar. Raw PTY output is never shown by
 default: peek it explicitly with `/takt:live [path]` or `/takt:sessions`, or
 inspect external runs (other terminals or other Pi sessions) via
-`/takt:status [path]` or `takt_read_screen`. This only cleans the Pi display;
+`/takt:status [path]` or `takt_read_screen`. Inside `takt` mode the pinned
+session's raw screen is the display itself, always showing the latest viewport
+after scrollback. This only cleans the Pi display;
 it never deletes TAKT tasks or run history automatically. The bridge only stops
 PTYs it created, and bounded stop failures are reported instead of retried
 indefinitely.
@@ -187,14 +220,13 @@ instead of silently guessing a path.
 
 ## Configuration
 
-The bridge uses `takt-acp` and `takt` from `PATH`. Override the executable names
-when needed with `TAKT_ACP_COMMAND` and `TAKT_COMMAND`. Pi launched from a
+The bridge uses `takt` from `PATH`. Override the executable name
+when needed with `TAKT_COMMAND`. Pi launched from a
 macOS GUI, Finder, or a launch agent may not inherit Homebrew, nvm, Volta, or
 npm-global paths; use absolute command paths in that case, for example:
 
 ```text
 TAKT_COMMAND=/opt/homebrew/bin/takt
-TAKT_ACP_COMMAND=/opt/homebrew/bin/takt-acp
 ```
 
 No Pi provider setting is changed by this package.

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { spawnCommand } from "./process-control.ts";
 import type {
   TaktLastExit,
+  TaktRunLogDiagnostics,
   TaktRunMeta,
   TaktRunSnapshot,
   TaktSessionStatus,
@@ -189,6 +190,7 @@ export function snapshotRun(
   ownerPid?: number,
   bundleInfo?: TaktWorkflowBundleInfo,
   livePhases?: TaktStepPhaseProgress,
+  logDiagnostics?: TaktRunLogDiagnostics,
 ): TaktRunSnapshot {
   const pid = ownerPid ?? meta.ownerPid ?? meta.pid;
   const status = classifyRunStatus(meta, pid);
@@ -217,6 +219,7 @@ export function snapshotRun(
     ...(meta.phase !== undefined ? { phase: meta.phase } : {}),
     ...(meta.reason ? { reason: meta.reason } : {}),
     ...(meta.failure ? { failure: meta.failure.error } : {}),
+    ...(logDiagnostics ? { logDiagnostics } : {}),
   };
 }
 
@@ -250,10 +253,16 @@ export function readRunSnapshots(cwd: string, taskItems: readonly TaktTaskItem[]
         const bundleInfo = meta.status === "running"
           ? readWorkflowBundleInfo(runCwd, entry.name)
           : undefined;
-        const livePhases = meta.status === "running"
-          ? readRunPhaseProgress(runCwd, entry.name)
-          : undefined;
-        const snapshot = { ...snapshotRun(meta, ownerPid, bundleInfo, livePhases), workspace: runCwd };
+        let livePhases: TaktStepPhaseProgress | undefined;
+        let logDiagnostics: TaktRunLogDiagnostics | undefined;
+        if (meta.status === "running" || meta.status === "failed") {
+          const tail = readLatestRunLogTail(runCwd, entry.name);
+          logDiagnostics = summarizeLogDiagnostics(tail);
+          if (meta.status === "running" && !("unavailable" in tail)) {
+            livePhases = summarizePhaseProgress(tail.events);
+          }
+        }
+        const snapshot = { ...snapshotRun(meta, ownerPid, bundleInfo, livePhases, logDiagnostics), workspace: runCwd };
         const existing = snapshotsBySlug.get(entry.name);
         if (!existing || compareRuns(snapshot, existing) < 0) {
           snapshotsBySlug.set(entry.name, snapshot);
@@ -302,7 +311,47 @@ function readRunWorkspaces(cwd: string): string[] {
   return workspaces;
 }
 
-const PHASE_LOG_TAIL_BYTES = 64 * 1_024;
+const LOG_TAIL_BYTES = 64 * 1_024;
+const LOG_EXCERPT_MAX_LENGTH = 280;
+const LOG_FIELD_MAX_LENGTH = 120;
+const DIAGNOSTIC_EVENT_TYPES = new Set([
+  "workflow_start",
+  "workflow_complete",
+  "workflow_failed",
+  "step_start",
+  "step_complete",
+  "step_failed",
+  "phase_start",
+  "phase_complete",
+  "phase_judge_stage",
+  "phase_failed",
+  "error",
+]);
+const ERROR_EVENT_TYPES = new Set([
+  "workflow_failed",
+  "step_failed",
+  "phase_failed",
+  "error",
+]);
+const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;]*[a-zA-Z]/g;
+const CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+
+interface RunLogTail {
+  events: Array<Record<string, unknown>>;
+  skippedLines: number;
+}
+
+type RunLogTailUnavailable = {
+  unavailable: true;
+  reason: "no_logs" | "unreadable";
+  skippedLines?: number;
+};
+
+type RunLogTailResult = RunLogTail | RunLogTailUnavailable;
+
+export interface ReadRunLogDiagnosticsOptions {
+  maxExcerptLength?: number;
+}
 
 /**
  * Parse the run's JSONL log tail for live intra-step phase activity: how many
@@ -311,96 +360,253 @@ const PHASE_LOG_TAIL_BYTES = 64 * 1_024;
  * trouble yields undefined and the meter falls back to meta phase only.
  */
 export function readRunPhaseProgress(cwd: string, runSlug: string): TaktStepPhaseProgress | undefined {
+  const tail = readLatestRunLogTail(cwd, runSlug);
+  if ("unavailable" in tail) {
+    return undefined;
+  }
+  return summarizePhaseProgress(tail.events);
+}
+
+/**
+ * Read bounded, sanitized diagnostic facts from the latest run JSONL log tail.
+ * Never throws; unavailable tails return a short reason instead.
+ */
+export function readRunLogDiagnostics(
+  cwd: string,
+  runSlug: string,
+  options: ReadRunLogDiagnosticsOptions = {},
+): TaktRunLogDiagnostics {
+  return summarizeLogDiagnostics(readLatestRunLogTail(cwd, runSlug), options.maxExcerptLength);
+}
+
+function readLatestRunLogTail(cwd: string, runSlug: string): RunLogTailResult {
   try {
     const logsDirectory = resolve(cwd, ".takt", "runs", runSlug, "logs");
     if (!existsSync(logsDirectory)) {
-      return undefined;
+      return { unavailable: true, reason: "no_logs" };
     }
     const logFiles = readdirSync(logsDirectory)
       .filter((name) => name.endsWith(".jsonl"))
       .sort();
     const latest = logFiles.at(-1);
     if (latest === undefined) {
-      return undefined;
+      return { unavailable: true, reason: "no_logs" };
     }
     const logPath = resolve(logsDirectory, latest);
     const size = statSync(logPath).size;
     let start = 0;
     const handle = openSync(logPath, "r");
-    let tail: string;
+    let tailText: string;
     try {
-      start = Math.max(0, size - PHASE_LOG_TAIL_BYTES);
+      start = Math.max(0, size - LOG_TAIL_BYTES);
       const length = size - start;
       const buffer = Buffer.alloc(length);
       readSync(handle, buffer, 0, length, start);
-      tail = buffer.toString("utf8");
+      tailText = buffer.toString("utf8");
     } finally {
       closeSync(handle);
     }
 
     const events: Array<Record<string, unknown>> = [];
-    for (const line of tail.split(/\r?\n/).slice(start > 0 ? 1 : 0)) {
+    let skippedLines = 0;
+    for (const line of tailText.split(/\r?\n/).slice(start > 0 ? 1 : 0)) {
+      if (line.length === 0) {
+        continue;
+      }
       try {
         const parsed: unknown = JSON.parse(line);
         if (isRecord(parsed)) {
           events.push(parsed);
+        } else {
+          skippedLines += 1;
         }
       } catch {
-        // Partial line at the tail boundary or a malformed record; skip it.
+        skippedLines += 1;
       }
     }
-
-    // Only count the currently executing step: everything after its step_start.
-    const lastStepStartIndex = findLastIndex(events, (event) => event.type === "step_start");
-    if (lastStepStartIndex < 0) {
-      return undefined;
-    }
-    const started = new Set<string>();
-    const completed = new Set<string>();
-    const workerNames = new Set<string>();
-    const startedIdsByWorkerName = new Map<string, Set<string>>();
-    for (const event of events.slice(lastStepStartIndex + 1)) {
-      const executionId = typeof event.phaseExecutionId === "string" ? event.phaseExecutionId : undefined;
-      const phaseName = typeof event.phaseName === "string" ? event.phaseName : "";
-      if (executionId === undefined) {
-        continue;
-      }
-      if (/^worker/i.test(phaseName)) {
-        workerNames.add(phaseName);
-        let ids = startedIdsByWorkerName.get(phaseName);
-        if (ids === undefined) {
-          ids = new Set<string>();
-          startedIdsByWorkerName.set(phaseName, ids);
-        }
-        ids.add(executionId);
-      }
-      switch (event.type) {
-        case "phase_start":
-          started.add(executionId);
-          break;
-        case "phase_complete":
-          started.add(executionId);
-          completed.add(executionId);
-          break;
-        case "phase_judge_stage":
-          break;
-      }
-    }
-    if (started.size === 0) {
-      return undefined;
-    }
-    const progress: TaktStepPhaseProgress = { started: started.size, completed: completed.size };
-    if (workerNames.size > 1) {
-      const doneWorkers = [...workerNames].filter((name) => {
-        const ids = startedIdsByWorkerName.get(name);
-        return ids !== undefined && ids.size > 0 && [...ids].every((id) => completed.has(id));
-      }).length;
-      progress.workers = { done: Math.min(doneWorkers, workerNames.size), total: workerNames.size };
-    }
-    return progress;
+    return { events, skippedLines };
   } catch {
+    return { unavailable: true, reason: "unreadable" };
+  }
+}
+
+function summarizePhaseProgress(events: readonly Record<string, unknown>[]): TaktStepPhaseProgress | undefined {
+  const lastStepStartIndex = findLastIndex(events, (event) => event.type === "step_start");
+  if (lastStepStartIndex < 0) {
     return undefined;
   }
+  const started = new Set<string>();
+  const completed = new Set<string>();
+  const workerNames = new Set<string>();
+  const startedIdsByWorkerName = new Map<string, Set<string>>();
+  for (const event of events.slice(lastStepStartIndex + 1)) {
+    const executionId = typeof event.phaseExecutionId === "string" ? event.phaseExecutionId : undefined;
+    const phaseName = typeof event.phaseName === "string" ? event.phaseName : "";
+    if (executionId === undefined) {
+      continue;
+    }
+    if (/^worker/i.test(phaseName)) {
+      workerNames.add(phaseName);
+      let ids = startedIdsByWorkerName.get(phaseName);
+      if (ids === undefined) {
+        ids = new Set<string>();
+        startedIdsByWorkerName.set(phaseName, ids);
+      }
+      ids.add(executionId);
+    }
+    switch (event.type) {
+      case "phase_start":
+        started.add(executionId);
+        break;
+      case "phase_complete":
+        started.add(executionId);
+        completed.add(executionId);
+        break;
+      case "phase_judge_stage":
+        break;
+    }
+  }
+  if (started.size === 0) {
+    return undefined;
+  }
+  const progress: TaktStepPhaseProgress = { started: started.size, completed: completed.size };
+  if (workerNames.size > 1) {
+    const doneWorkers = [...workerNames].filter((name) => {
+      const ids = startedIdsByWorkerName.get(name);
+      return ids !== undefined && ids.size > 0 && [...ids].every((id) => completed.has(id));
+    }).length;
+    progress.workers = { done: Math.min(doneWorkers, workerNames.size), total: workerNames.size };
+  }
+  return progress;
+}
+
+function summarizeLogDiagnostics(
+  tail: RunLogTailResult,
+  maxExcerptLength = LOG_EXCERPT_MAX_LENGTH,
+): TaktRunLogDiagnostics {
+  if ("unavailable" in tail) {
+    return {
+      available: false,
+      reason: tail.reason,
+      ...(tail.skippedLines ? { skippedLines: tail.skippedLines } : {}),
+    };
+  }
+  const { events, skippedLines } = tail;
+  if (events.length === 0) {
+    return {
+      available: false,
+      reason: "no_events",
+      ...(skippedLines > 0 ? { skippedLines } : {}),
+    };
+  }
+
+  const result: Extract<TaktRunLogDiagnostics, { available: true }> = { available: true };
+  if (skippedLines > 0) {
+    result.skippedLines = skippedLines;
+  }
+
+  const lastStepStart = findLast(events, (event) => event.type === "step_start");
+  if (lastStepStart && isNonEmptyString(lastStepStart.step)) {
+    result.step = sanitizeLogExcerpt(lastStepStart.step, LOG_FIELD_MAX_LENGTH);
+  }
+
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    const eventType = typeof event.type === "string" ? event.type : undefined;
+    if (eventType === undefined || !DIAGNOSTIC_EVENT_TYPES.has(eventType)) {
+      continue;
+    }
+    result.eventType = eventType;
+    if (isNonEmptyString(event.phaseName)) {
+      result.phase = sanitizeLogExcerpt(event.phaseName, LOG_FIELD_MAX_LENGTH);
+    }
+    if (isNonEmptyString(event.status)) {
+      result.status = sanitizeLogExcerpt(event.status, 80);
+    }
+    const timestamp = pickLogTimestamp(event);
+    if (timestamp) {
+      result.timestamp = timestamp;
+    }
+    break;
+  }
+
+  const phaseProgress = summarizePhaseProgress(events);
+  if (phaseProgress?.workers) {
+    result.workers = { ...phaseProgress.workers };
+  }
+
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    const eventType = typeof event.type === "string" ? event.type : "";
+    const message = extractAllowlistedMessage(event, eventType, maxExcerptLength);
+    if (message) {
+      result.message = message;
+      break;
+    }
+  }
+
+  const hasContent = result.eventType !== undefined ||
+    result.step !== undefined ||
+    result.phase !== undefined ||
+    result.status !== undefined ||
+    result.workers !== undefined ||
+    result.timestamp !== undefined ||
+    result.message !== undefined;
+  if (!hasContent) {
+    return {
+      available: false,
+      reason: "no_events",
+      ...(skippedLines > 0 ? { skippedLines } : {}),
+    };
+  }
+
+  return result;
+}
+
+export function sanitizeLogExcerpt(value: string, maxLength: number): string {
+  let cleaned = value.replace(ANSI_ESCAPE_PATTERN, "").replace(CONTROL_CHAR_PATTERN, "");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  if (maxLength <= 1) {
+    return "…";
+  }
+  return `${cleaned.slice(0, maxLength - 1)}…`;
+}
+
+function extractAllowlistedMessage(
+  event: Record<string, unknown>,
+  eventType: string,
+  maxLength: number,
+): string | undefined {
+  const raw = isNonEmptyString(event.error)
+    ? event.error
+    : ERROR_EVENT_TYPES.has(eventType) && isNonEmptyString(event.message)
+      ? event.message
+      : undefined;
+  return raw ? sanitizeLogExcerpt(raw, maxLength) : undefined;
+}
+
+function pickLogTimestamp(event: Record<string, unknown>): string | undefined {
+  for (const key of ["timestamp", "time", "at"] as const) {
+    if (isNonEmptyString(event[key])) {
+      return sanitizeLogExcerpt(event[key], 40);
+    }
+  }
+  return undefined;
+}
+
+function findLast<T>(
+  items: readonly T[],
+  predicate: (item: T) => boolean,
+): T | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index])) {
+      return items[index];
+    }
+  }
+  return undefined;
 }
 
 function findLastIndex<T>(items: readonly T[], predicate: (item: T) => boolean): number {

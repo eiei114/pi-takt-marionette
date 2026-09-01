@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 - 2026-09-01
+## 0.6.0 - 2026-09-01
 
 - Add a platform keyboard adapter for dual-input mode. `F6` remains the
   portable primary shortcut; macOS shows `F6 / Fn+F6` and `Ctrl+Option+T`,
@@ -16,6 +16,94 @@
 - Keep broker-owned TAKT PTYs alive across Pi `/reload`, then reconnect to the
   same PID and replay the bounded transcript so raw screen inspection and input
   continue in the replacement extension runtime.
+
+## 0.5.1 - 2026-08-31
+
+- **`/takt:status` log details**: the diagnostic overlay now reads the latest
+  run JSONL log tail (64 KiB, bounded) and shows a compact `log details`
+  section with recent step, phase, worker progress, and a sanitized error
+  excerpt when available. Missing or malformed logs surface short
+  `no logs` / `unavailable` reasons instead of breaking the overlay.
+  The live widget and `takt_read_screen` stay summary-only.
+
+## 0.5.0 - 2026-08-29
+
+- **Width-aware name elision**: long project folder names, workflow names,
+  and step names in the live widget are now elided as `head…tail` instead of
+  being sliced off at the right edge. The elapsed timer (`⏱`) and completion
+  duration are always fully visible — the row reserves their width first and
+  only then shares the remaining space across names by priority
+  (label > workflow > step). CJK and wide emoji are measured by display
+  column, so rows stay inside the widget width.
+- The compact workflow widget elides task and step names under the same
+  budget rule.
+
+## 0.4.0 - 2026-08-29
+
+- **Run outcome retention**: a finished TAKT run's `✅ 完了` / `🔴 ❌ 失敗`
+  row now stays visible in the session-owned live widget until the project's
+  next run starts or the Pi session ends, instead of disappearing the moment
+  the run finishes.
+- Run completion notifications now carry the outcome: `✅ TAKT <label>
+  finished.` (info) or `🔴 TAKT <label> failed (exit N).` (error).
+- A manually stopped session hides immediately and is never rendered as ✅.
+
+## 0.3.6 - 2026-08-28
+
+- `takt_resume_run` no longer reports a successful resume when TAKT picks a
+  stale run whose workflow is missing (`Workflow "..." not found for direct
+  run "..."`). It now fails with the failing line and a recovery hint (queued
+  tasks are recovered with `takt run`) instead of pretending to continue.
+- `TAKT status check failed for <profile>` errors now include the underlying
+  cause (for example an invalid `.takt/tasks.yaml`) instead of the bare label.
+
+## 0.3.5 - 2026-08-26
+
+- Replace ACP task enqueue with direct, lock-protected writes to
+  `.takt/tasks.yaml` and per-task `order.md`. The bridge preserves the exact
+  task body, stores workflow/branch/worktree metadata, verifies the persisted
+  pending record, and keeps execution behind the existing explicit run gate.
+
+## 0.3.4 - 2026-08-24
+
+- Split the pre-execution TAKT route into dedicated internal Skills for intake,
+  project setup, workflow selection, enqueue verification, and the final run
+  intent gate. `takt-pi-next-step` now hands off to the exact unmet preflight
+  boundary and stops before execution without explicit user intent.
+
+## 0.3.3 - 2026-08-24
+
+- Add the `takt-pi-next-step` Skill, an ask-matt-style navigator that inspects
+  target, setup, catalog, queue, run, and recovery state, then routes to one
+  concrete next action without bypassing workflow selection or explicit run
+  intent.
+
+## 0.3.2 - 2026-08-24
+
+- Add an effective TAKT standalone workflow catalog for project, user-global,
+  and builtin workflows. Every fresh route can inspect category/search data;
+  builtin enable/ignore settings and source precedence are respected, callable
+  and internal helpers are excluded, and catalog failures fail closed.
+- Require `workflow: <id>` in queued task bodies and verify the workflow
+  reported by ACP. Add `takt_run_pending` for explicit all-pending `takt run`
+  execution through the shared PTY/widget lifecycle; keep `takt exec` as an
+  explicit instant/interactive path. Builtin workflow rows now show `· builtin`
+  instead of the misleading `(default)` label.
+- Render raw TAKT screens from the current viewport origin: normal-buffer
+  scrollback no longer hides the latest reply behind stale top-of-scrollback
+  lines in the live widget, `/takt:live`, and `takt_read_screen`.
+- Make `takt` mode a real fullscreen focused terminal: entering it pins one
+  bridge-owned running session automatically (or asks which one to pin when
+  several run) and shows its raw PTY full-screen while exclusively owning
+  human input — `Esc` returns to Pi, `Ctrl+C` forwards unchanged,
+  `Ctrl+Alt+T` keeps cycling modes, and dimension changes resize the pinned
+  PTY. The pinned view closes idempotently on runner exit, stop, reload, or
+  shutdown and never re-targets input to another session.
+- Add multi-session navigation inside focus: `Ctrl+Alt+↑/↓` move to the
+  previous/next running session with wraparound, each switch updates display
+  and input destination atomically with an `old → new` notification, and
+  `/takt:session previous|next` provides the same transition as a command
+  fallback for terminals that swallow modifier-arrow shortcuts.
 
 ## 0.3.1 - 2026-08-22
 

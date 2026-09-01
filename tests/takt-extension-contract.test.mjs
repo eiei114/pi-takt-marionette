@@ -32,11 +32,13 @@ test("fresh Pi runtime publishes all TAKT control tools and replace schema", () 
     "takt_project_setup",
     "takt_read_screen",
     "takt_resume_run",
+    "takt_run_pending",
     "takt_run_workflow",
     "takt_send_input",
     "takt_set_mode",
     "takt_stop",
     "takt_submit_go",
+    "takt_workflow_catalog",
   ]);
   assert.equal(tools.get("takt_exec_prompt").parameters.properties.replace.type, "boolean");
   assert.equal(tools.get("takt_run_workflow").parameters.properties.workflow.type, "string");
@@ -50,6 +52,8 @@ test("fresh Pi runtime publishes all TAKT control tools and replace schema", () 
   assert.equal(tools.get("takt_project_setup").parameters.properties.copyGlobalPreset.type, "boolean");
   assert.ok(shortcuts.includes("ctrl+alt+t"));
   assert.ok(shortcuts.includes("f6"));
+  assert.equal(tools.get("takt_run_pending").parameters.properties.profile.type, "string");
+  assert.equal(tools.get("takt_workflow_catalog").parameters.properties.query.type, "string");
 });
 
 test("fresh Pi loader exposes the executable tool schema", async () => {
@@ -65,11 +69,13 @@ test("fresh Pi loader exposes the executable tool schema", async () => {
     "takt_project_setup",
     "takt_read_screen",
     "takt_resume_run",
+    "takt_run_pending",
     "takt_run_workflow",
     "takt_send_input",
     "takt_set_mode",
     "takt_stop",
     "takt_submit_go",
+    "takt_workflow_catalog",
   ]);
   const execTool = tools.get("takt_exec_prompt").definition;
   assert.equal(execTool.parameters.type, "object");
@@ -86,7 +92,11 @@ test("fresh Pi loader exposes the executable tool schema", async () => {
   const enqueueTool = tools.get("takt_enqueue_task").definition;
   assert.equal(enqueueTool.parameters.type, "object");
   assert.ok(enqueueTool.parameters.required.includes("task"));
+  assert.ok(enqueueTool.parameters.required.includes("worktree"));
+  assert.ok(enqueueTool.parameters.required.includes("prMode"));
   assert.equal(enqueueTool.parameters.properties.profile.type, "string");
+  assert.equal(enqueueTool.parameters.properties.worktree.type, "boolean");
+  assert.ok(enqueueTool.parameters.properties.prMode.anyOf);
 });
 
 test("a second fresh extension registration publishes the same tool contract", () => {

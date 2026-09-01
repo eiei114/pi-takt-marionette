@@ -1,6 +1,6 @@
 ---
 name: takt-pi-orchestrator
-description: "Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, or recovery, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, or recovering a TAKT task. Do not start task execution or queue work before intent and target are clear."
+description: "Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, recovery, or next-step navigation, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, recovering a TAKT task, or asks what to do next. Do not start task execution or queue work before intent and target are clear."
 ---
 
 # TAKT Pi Orchestrator
@@ -19,14 +19,16 @@ the current Pi project, an explicit path, or a named profile:
    or the current Pi project when the user says “this project”, “here”, or
    otherwise makes the current folder unambiguous. Never guess a different
    path or silently search for a similarly named repository.
-2. **Intent** — setup only, discuss and queue a pending task, execute now, or
-   inspect/recover an existing session.
-3. **Execution policy** — preset/profile, Pi-only provider constraint, worktree
-   expectation, workflow/provider lane, and whether external side effects are
-   allowed. A project-specific workflow is an explicit user/project
-   constraint, not a reason to substitute the global Pi default. When the
-   workflow/lane is still ambiguous after target resolution, follow
-   **Workflow selection** below before planning or execution.
+2. **Intent** — setup only, ask for the next action, discuss and queue a pending
+   task, execute now, or inspect/recover an existing session.
+3. **Execution policy** — preset/profile, Pi-only provider constraint, explicit
+   per-task worktree choice, PR mode (`none`, `regular`, or `draft`),
+   workflow/provider lane, and whether external side effects are allowed.
+   Worktree and PR mode must be selected for every fresh task; never inherit a
+   project default or choose an unset mode. Workflow selection is required for
+   every fresh route. It is not a
+   reason to substitute the global Pi default; follow **Workflow selection**
+   below before planning or execution.
 4. **Task contract** — goal, scope, non-goals, acceptance criteria, and
    validation evidence when the request is implementation work.
 
@@ -81,68 +83,63 @@ to `takt-pi-runner`; do not start a duplicate run.
 
 ## Workflow selection
 
-Resolve the project workflow **before** handing off to the planner or runner.
-Bootstrap must not invent or rewrite workflow files; this step only chooses
-among workflows that already exist under the target's `.takt/workflows/`.
+Resolve the workflow **before** handing off to planner or runner. Use TAKT's
+effective catalog, not a project-only scan. Bootstrap must not invent or
+rewrite workflow files.
 
-1. After target + bootstrap, list project workflow YAML basenames
-   (stem without `.yaml`) under `<cwd>/.takt/workflows/`. Ignore empty dirs.
-2. **Do not ask** when any of these already pin one workflow:
-   - user named an exact workflow id (`workflow: …`) or lane alias
-   - intent maps to exactly one matching project workflow
-   - recovery/resume of an existing session (keep that run's workflow)
-3. **Ask once** with `ask_user_question` / `cursor_ask_question` when the lane
-   is still ambiguous, for example:
-   - intent class has **two or more** candidates (e.g. `dtm-cursor-plan-verify`
-     vs `dtm-cursor-plan-verify-grok` for audit)
-   - user said “run TAKT” / “このプロジェクトで” without a lane, and the project
-     has multiple workflows
-   - intent could fit more than one lane (audit vs implement vs bug, etc.)
-4. Build options from the real files: label = workflow id, short description
-   from the YAML `description:` when present. Prefer project lane docs /
-   `scripts/takt-lane.mjs` aliases when they exist. Cap to the real candidates;
-   do not invent workflows that are not on disk.
-5. Carry the chosen id as a literal `workflow: <id>` directive into the
-   planner/runner handoff. Never substitute the global Pi default when a
-   project workflow was chosen or is required.
+1. After target + bootstrap, call `takt_workflow_catalog` for the exact profile.
+   It resolves project > user-global > builtin, deduplicates names, honors
+   `enable_builtin_workflows` / `disabled_builtins`, and returns source,
+   description, categories, and standalone workflows only.
+2. If the catalog is unavailable or empty, stop with its diagnostic. Do not
+   enqueue, run, or silently fall back to `default`.
+3. For a fresh route, always show the catalog choice with
+   `ask_user_question` / `cursor_ask_question`. Present categories plus a
+   search/exact-id path; include the `Others` category for uncategorized
+   workflows. A one-item catalog still gets displayed and confirmed.
+4. If the user supplied an exact `workflow: <id>` directive, resolve it in the
+   catalog and show it as **locked**; do not replace it. An unknown or disabled
+   id fails closed. Resume/recovery displays the run's existing workflow as
+   locked and never reselects it.
+5. Carry the chosen id as one literal `workflow: <id>` directive into the
+   planner task body. The orchestrator owns selection; planner and runner only
+   preserve and validate it.
 
-If only the default Pi lane applies (no project workflows, or a single
-project workflow that matches intent), proceed without a selection UI.
+Callable/internal workflows are not picker candidates. If a project lane alias
+points at one, resolve it to a standalone workflow or ask for a valid
+standalone id; never expose an internal helper as a selectable route.
 
 ## DTM Cursor lane
 
 When the user names **DTM Cursor**, or the resolved target folder basename is
 `dtm-cursor`, route with the project's current lanes:
 
-1. Prefer `dtm-cursor-plan-verify` for audit/design (`audit` / `normal`),
-   `dtm-cursor-plan-verify-grok` for the Grok+Composer audit variant
-   (`audit-grok` / `normal-grok`),
-   `dtm-cursor-implement` for feature work (`implement` → builtin
-   `development-core` + project knowledge `dtm-boundary`),
-   `dtm-cursor-bug-investigate` for bug diagnosis (`bug` / `bug-investigate`
-   → handoff to `implement`),
-   `dtm-cursor-perf-investigate` for perf diagnosis (`perf` / `perf-investigate`
-   → handoff to `implement`), or
-   `dtm-cursor-design-optimize` for local redesign options (`design` /
-   `design-optimize` → handoff to `implement`, or short `audit` if needed).
-   If the user says only `audit` / `normal` / “監査” and both
-   `dtm-cursor-plan-verify` and `dtm-cursor-plan-verify-grok` exist, treat
-   that as ambiguous and follow **Workflow selection** (do not silently pick
-   Luna or Grok).
+1. Use DTM lane names only as intent hints: audit/design, implement, bug, perf,
+   or design-optimize. Resolve the final id from the effective standalone
+   catalog and still perform the required fresh-route selection. Do not map a
+   lane directly to an internal helper such as `development-core`.
+   If the user says only `audit` / `normal` / “監査” and multiple candidates
+   exist, show the catalog and ask; never silently pick Luna, Grok, or default.
 2. Preserve the project's existing `.takt/config.yaml` and custom workflow
    files. Bootstrap may add missing bridge scaffolding.
 3. Resume and recovery use the project's configured Pi provider/workflow.
 
 This routing applies only to DTM Cursor. Other projects keep their explicit
-provider/workflow constraints; if none are specified, use the normal Pi
-workflow defaults.
+provider/workflow constraints; if none are specified, catalog selection is
+still required. The selected workflow is a task contract, not an exec preset.
 
 ## Route
 
 | Resolved intent | Specialized path |
 |---|---|
+| Ask what to do next or how to continue | `takt-pi-next-step` |
+| Resolve target and intent | `takt-pi-intake` |
+| Prepare exact target/profile | `takt-pi-project-setup` |
+| Select and lock a workflow | `takt-pi-workflow-selection` |
 | Discuss requirements, then make a pending task | `takt-pi-task-planner` |
-| Run an already finalized task/issue | `takt-pi-runner` |
+| Confirm and verify enqueue | `takt-pi-queue-gate` |
+| Ask for final execution intent | `takt-pi-run-gate` |
+| Run an already finalized queued task/issue | `takt-pi-runner` |
 | Inspect, stop, replace, or recover a session | `takt-pi-runner` recovery flow |
 | Setup only | `takt_project_setup` and stop |
 
@@ -157,6 +154,12 @@ rather than guess.
 
 After setup, automatically read the selected specialized Skill and continue in
 the same conversation; do not make the human choose an internal Skill name.
+Planner and runner handoffs happen only after workflow selection. For next-step
+requests, read `../takt-pi-next-step/SKILL.md` immediately after target/readiness
+resolution so it can inspect current evidence (including the catalog when
+needed) before handing back to this orchestrator or the planner/runner. The
+navigator recommends one next action; it does not bypass workflow selection,
+confirmation, or explicit run intent.
 Read `../takt-pi-task-planner/SKILL.md` for the planner route and
 `../takt-pi-runner/SKILL.md` for the runner/recovery route.
 The orchestrator does not replace the planner or runner instructions. It does
@@ -170,9 +173,11 @@ If the user asks for a commit, push, or pull request, keep that request in the
 task contract and verify it at the end; do not infer delivery side effects from
 a branch name. Before claiming completion, confirm terminal workflow status,
 validation evidence, changed files, and the actual commit/remote/PR result.
-`auto_pr: true` means a regular PR; `draft_pr: true` means a draft. If the
-available bridge tool cannot set the requested delivery option, report that
-limitation instead of claiming that a PR will appear.
+`auto_pr: true` with `draft_pr: false` means a regular PR; both true means a
+draft PR; both false means no PR. The bridge must receive the selected policy
+and verify the persisted task fields. If the requested policy is missing,
+invalid, or cannot be verified, stop instead of inheriting a default or
+claiming that a PR will appear.
 
 For review fixes on an existing pull request, carry its positive number as
 structured `prNumber` into the runner. Do not reduce the PR URL or number to task
@@ -181,20 +186,22 @@ the head branch, and retain the base/head diff context.
 
 ## Safety boundary
 
-- Queueing requires a finalized body and user confirmation.
-- Execution requires explicit intent to run; planning alone never runs.
+- Queueing requires a finalized body, a selected workflow, and user
+  confirmation. `takt_enqueue_task` writes the TAKT task files directly and verifies the persisted workflow before
+  returning success; mismatch or missing result leaves the pending task in
+  place as unverified and blocks execution.
+- Execution requires explicit intent to run; planning and enqueueing alone
+  never run. The normal route calls `takt_run_pending`, which runs all pending
+  tasks through the shared `takt run` PTY/widget lifecycle.
 - Project bootstrap is safe and idempotent; it may happen automatically after
   the exact target is known, without turning into queueing or execution.
 - Preserve Pi-only/provider/worktree constraints exactly; do not invent them.
-- For DTM Cursor, route `audit`/`normal` → `dtm-cursor-plan-verify`,
-  `audit-grok`/`normal-grok` → `dtm-cursor-plan-verify-grok`,
-  `implement` → `dtm-cursor-implement`, `bug`/`bug-investigate` →
-  `dtm-cursor-bug-investigate`, `perf`/`perf-investigate` →
-  `dtm-cursor-perf-investigate`, and `design`/`design-optimize` →
-  `dtm-cursor-design-optimize` as documented in the project. When both audit
-  variants exist and the user did not name one, ask per **Workflow selection**.
-- Never silently pick among multiple matching project workflows; ask once,
-  then carry `workflow: <id>` into the next skill.
+- For DTM Cursor, use lane names only to filter catalog search; never bypass
+  catalog selection or target an internal workflow. Every fresh route displays
+  the effective catalog, then carries `workflow: <id>` into the next skill.
+- Direct planner/runner invocation without a workflow returns here for catalog
+  selection. `takt exec` is an explicit instant/interactive escape hatch, not
+  the normal implementation route.
 - Carry the profile returned by setup into the next skill; never fall back to a
   guessed profile after setup succeeds.
 - Keep the handoff seamless. Briefly state the next step in human terms

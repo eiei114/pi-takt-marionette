@@ -1,7 +1,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { matchesKey, Key, Text } from "@earendil-works/pi-tui";
-import { TaktAcpClient, type TaktEnqueueResult } from "../lib/takt-acp-client.ts";
+import {
+  TaktDirectQueueVerificationError,
+  TaktTaskQueue,
+  extractWorkflowDirective,
+  type VerifiedTaktDirectEnqueueResult,
+} from "../lib/takt-task-queue.ts";
+import {
+  formatTaktTaskExecutionPolicy,
+  type TaktPrMode,
+  type TaktTaskExecutionPolicy,
+} from "../lib/takt-task-policy.ts";
 import {
   cycleTaktInputMode,
   describeTaktInputMode,
@@ -41,6 +51,7 @@ import {
   TaktRunController,
   terminalContainsText,
   terminalEndsWithText,
+  terminalLineContaining,
 } from "../lib/takt-run-controller.ts";
 import {
   setupProjectLocalTakt,
@@ -77,11 +88,22 @@ import {
   type WorkflowStepRef,
 } from "../lib/takt-workflow-steps.ts";
 import {
+  assertWorkflowCatalogReady,
+  resolveWorkflowCatalog,
+  type WorkflowCatalog,
+} from "../lib/takt-workflow-catalog.ts";
+import {
   applyStepModelSelections,
   type StepModelSelection,
 } from "../lib/takt-runtime-yaml.ts";
 import { formatPiModelRef, listPiModels } from "../lib/takt-pi-models.ts";
 import { createTaktKeyboardAdapter } from "../lib/takt-keyboard.ts";
+import {
+  orderTaktFocusSessions,
+  TaktFullscreenFocusView,
+  type TaktFocusExitResult,
+  type TaktFocusSession,
+} from "../lib/takt-focus-view.ts";
 import { SearchableListController } from "../lib/takt-search-select.ts";
 import { createTaktInputQueue, type TaktInputQueue } from "../lib/takt-input-queue.ts";
 import { setTaktLang, taktLang, toggleTaktLang, type TaktLang } from "../lib/takt-i18n.ts";
@@ -189,6 +211,29 @@ const TAKT_ENQUEUE_TASK_PARAMETERS = Type.Object({
     description: "Named TAKT profile or exact project path; defaults to pi-docs",
   })),
   task: Type.String({ description: "Exact ready-to-run task body to queue; this does not start execution" }),
+  worktree: Type.Boolean({
+    description: "Whether TAKT creates an isolated worktree for this task; choose every time",
+  }),
+  prMode: Type.Union([
+    Type.Literal("none"),
+    Type.Literal("regular"),
+    Type.Literal("draft"),
+  ], { description: "Per-task delivery: no PR, regular PR, or draft PR; choose every time" }),
+});
+
+const TAKT_WORKFLOW_CATALOG_PARAMETERS = Type.Object({
+  profile: Type.Optional(Type.String({
+    description: "Named TAKT profile or exact project path; defaults to the current Pi project",
+  })),
+  query: Type.Optional(Type.String({
+    description: "Optional case-insensitive search over workflow id, description, and categories",
+  })),
+});
+
+const TAKT_RUN_PENDING_PARAMETERS = Type.Object({
+  profile: Type.Optional(Type.String({
+    description: "Named TAKT profile or exact project path; defaults to pi-docs",
+  })),
 });
 
 const TAKT_PROJECT_SETUP_PARAMETERS = Type.Object({
@@ -227,7 +272,12 @@ const TAKT_READ_SCREEN_PARAMETERS = Type.Object({
 });
 
 type TaktBridgeStatus = Pick<TaktSummary, "status"> & Partial<Pick<TaktSummary, "pid" | "stage" | "lastExit">>;
-type TaktBridgeEnqueueResult = TaktEnqueueResult & { project: string; cwd: string };
+type TaktBridgeEnqueueResult = VerifiedTaktDirectEnqueueResult & {
+  project: string;
+  cwd: string;
+  expectedWorkflow: string;
+  workflowVerified: true;
+};
 
 async function showStatus(
   ctx: ExtensionContext,
@@ -271,12 +321,14 @@ interface ManagedProject {
   id: string;
   cwd: string;
   label: string;
-  acp: TaktAcpClient;
+  enqueueClient: TaktTaskQueue;
   runner: TaktRunController;
   summary?: TaktSummary;
   stage: TaktExecStage;
   promptPreview?: string;
   execTracking?: TaktExecTracking;
+  /** Queue/run starts at a terminal prompt; allow one explicit initial /go. */
+  pendingRunAwaitingInput?: boolean;
   queuedInputs?: TaktInputQueue;
 }
 
@@ -289,6 +341,7 @@ interface TaktExecTracking {
 class TaktBridgeRuntime implements TaktProjectStackSource {
   private readonly projects = new Map<string, ManagedProject>();
   private readonly profiles = new Map<string, TaktProjectProfile>();
+  private readonly unverifiedQueueWorkflows = new Map<string, string>();
   private readonly listeners = new Set<() => void>();
   private context: ExtensionContext | undefined;
   private refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -297,7 +350,10 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   private statusRefreshErrorCount = 0;
   private liveWidgetVisible = false;
   private inputMode: TaktInputMode = "pi";
-  private terminalInputUnsubscribe: (() => void) | undefined;
+  /** Active fullscreen focus view; owns human input while takt mode runs. */
+  private focusView: TaktFullscreenFocusView | undefined;
+  private focusGeneration = 0;
+  private focusViewOpenPromise: Promise<void> | undefined;
   private initialized = false;
   private initializePromise: Promise<void> | undefined;
 
@@ -483,12 +539,34 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (!project) {
       return undefined;
     }
-    return this.enqueueTaskInProject(project, task, options);
+    const executionPolicy = await this.selectTaskExecutionPolicy(project);
+    if (!executionPolicy) {
+      return undefined;
+    }
+    let selectedWorkflow: string | undefined;
+    try {
+      selectedWorkflow = extractWorkflowDirective(task)
+        ?? await this.selectWorkflowForProject(project);
+    } catch (error) {
+      context.ui.notify(`TAKT workflow selection failed: ${errorMessage(error)}`, "error");
+      if (options.throwOnError) {
+        throw error;
+      }
+      return undefined;
+    }
+    if (!selectedWorkflow) {
+      return undefined;
+    }
+    const taskBody = extractWorkflowDirective(task)
+      ? task
+      : `${task.trim()}\n\n## Constraints\n- workflow: ${selectedWorkflow}`;
+    return this.enqueueTaskInProject(project, taskBody, executionPolicy, options);
   }
 
   async enqueueProfileTask(
     profileName: string,
     task: string,
+    executionPolicy: TaktTaskExecutionPolicy,
   ): Promise<TaktBridgeEnqueueResult> {
     const context = this.context;
     if (!context?.hasUI) {
@@ -500,16 +578,50 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     const project = this.ensureProject(profile.cwd);
     await this.refreshProject(project, { includeTaskList: false });
-    const result = await this.enqueueTaskInProject(project, task, { throwOnError: true });
+    const result = await this.enqueueTaskInProject(project, task, executionPolicy, { throwOnError: true });
     if (!result) {
       throw new Error(`TAKT task could not be queued in ${project.label}`);
     }
     return result;
   }
 
+  async workflowCatalog(
+    profileOrPath = "",
+    query = "",
+  ): Promise<WorkflowCatalog> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      throw new Error("TAKT bridge requires an interactive Pi UI");
+    }
+    const project = profileOrPath.trim()
+      ? this.ensureProject(this.resolveTargetPath(profileOrPath, context.cwd))
+      : this.currentProject();
+    const catalog = assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+      taktCommand: process.env.TAKT_COMMAND ?? "takt",
+    }));
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) {
+      return catalog;
+    }
+    const workflows = catalog.workflows.filter((entry) =>
+      [entry.name, entry.description ?? "", ...entry.categories]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(normalizedQuery));
+    const names = new Set(workflows.map((entry) => entry.name));
+    return {
+      ...catalog,
+      workflows,
+      categories: filterWorkflowCatalogCategories(catalog.categories, names),
+      ready: workflows.length > 0,
+      errors: workflows.length > 0 ? catalog.errors : [`No workflows match query: ${query}`],
+    };
+  }
+
   private async enqueueTaskInProject(
     project: ManagedProject,
     task: string,
+    executionPolicy: TaktTaskExecutionPolicy,
     options: { throwOnError?: boolean } = {},
   ): Promise<TaktBridgeEnqueueResult | undefined> {
     const context = this.context;
@@ -520,10 +632,33 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       if (!task.trim()) {
         throw new Error("TAKT task must not be empty");
       }
-      const result = await project.acp.enqueue(task);
-      context.ui.notify(`TAKT task queued for ${project.label} (worktree run).`, "info");
-      await this.refreshProject(project, { includeTaskList: false });
-      return { project: project.label, cwd: project.cwd, ...result };
+      const expectedWorkflow = extractWorkflowDirective(task);
+      if (!expectedWorkflow) {
+        throw new Error("TAKT task must include an exact `workflow: <id>` directive before enqueueing");
+      }
+      const catalog = assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+        taktCommand: process.env.TAKT_COMMAND ?? "takt",
+      }));
+      if (!catalog.workflows.some((workflow) => workflow.name === expectedWorkflow)) {
+        throw new Error(
+          `Workflow "${expectedWorkflow}" is not an enabled standalone workflow in the effective TAKT catalog; enqueue blocked`,
+        );
+      }
+      try {
+        const result: VerifiedTaktDirectEnqueueResult = await project.enqueueClient.enqueue(task, executionPolicy);
+        this.unverifiedQueueWorkflows.delete(project.id);
+        context.ui.notify(
+          `TAKT task queued for ${project.label} (${formatTaktTaskExecutionPolicy(executionPolicy)}).`,
+          "info",
+        );
+        await this.refreshProject(project, { includeTaskList: false });
+        return { project: project.label, cwd: project.cwd, ...result };
+      } catch (error) {
+        if (error instanceof TaktDirectQueueVerificationError) {
+          this.unverifiedQueueWorkflows.set(project.id, errorMessage(error));
+        }
+        throw error;
+      }
     } catch (error) {
       context.ui.notify(`TAKT enqueue failed: ${errorMessage(error)}`, "error");
       if (options.throwOnError) {
@@ -564,7 +699,6 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       context.ui.notify(externalSessionError(project).message, "warning");
       return;
     }
-
     const confirmed = await context.ui.confirm(
       "Start TAKT",
       `Run all pending tasks in ${project.label}?\n${project.cwd}\nTAKT keeps its worktree setting.`,
@@ -574,14 +708,78 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
 
     try {
-      project.runner.reconcile();
-      if (project.runner.hasSession) {
-        await project.runner.dispose();
-      }
-      await project.runner.start();
-      await this.showLive();
+      await this.startPendingProject(project);
     } catch (error) {
       context.ui.notify(`TAKT start failed for ${project.label}: ${errorMessage(error)}`, "error");
+    }
+  }
+
+  async runPendingProfile(
+    profileName = "pi-docs",
+    signal?: AbortSignal,
+    onUpdate?: (message: string) => void,
+  ): Promise<{ profile: string; cwd: string; pending: number; started: true }> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      throw new Error("TAKT bridge requires an interactive Pi UI");
+    }
+    throwIfAborted(signal);
+    const profile = this.profiles.get(normalizeProfileName(profileName));
+    if (!profile) {
+      throw new Error(`TAKT profile not found: ${profileName}. Run takt_project_setup first.`);
+    }
+    const project = this.ensureProject(profile.cwd);
+    const pending = await this.startPendingProject(project, onUpdate, signal);
+    return { profile: profile.name, cwd: project.cwd, pending, started: true };
+  }
+
+  private async startPendingProject(
+    project: ManagedProject,
+    onUpdate?: (message: string) => void,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      throw new Error("TAKT bridge requires an interactive Pi UI");
+    }
+    const unverifiedWorkflow = this.unverifiedQueueWorkflows.get(project.id);
+    if (unverifiedWorkflow) {
+      throw new Error(
+        `TAKT pending execution is blocked for ${project.label} until the previous queue workflow mismatch is resolved: ${unverifiedWorkflow}`,
+      );
+    }
+    assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+      taktCommand: process.env.TAKT_COMMAND ?? "takt",
+    }));
+    if (project.runner.isRunning) {
+      throw new Error(`TAKT is already running in ${project.label}; use takt_read_screen or takt_stop first`);
+    }
+    if (!await this.refreshControlState(project)) {
+      throw new Error(
+        `TAKT status check failed for ${project.label}${this.statusRefreshErrorMessage ? `: ${this.statusRefreshErrorMessage}` : ""}`,
+      );
+    }
+    if (blocksNewExecution(project.summary)) {
+      await this.showLive(false);
+      throw externalSessionError(project);
+    }
+    const pending = project.summary?.pending ?? 0;
+    throwIfAborted(signal);
+
+    project.runner.reconcile();
+    if (project.runner.hasSession) {
+      await project.runner.dispose();
+    }
+    this.setProjectStage(project, "starting", onUpdate, `Starting takt run for ${pending} pending task(s) in ${project.label}…`);
+    try {
+      await project.runner.start(["run"]);
+      project.pendingRunAwaitingInput = true;
+      this.setProjectStage(project, "running", onUpdate, `TAKT running all pending tasks in ${project.label}.`);
+      await this.showLive(false);
+      return pending;
+    } catch (error) {
+      this.setProjectStage(project, "failed", onUpdate);
+      throw error;
     }
   }
 
@@ -698,7 +896,8 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (text === undefined || !text.trim()) {
       return;
     }
-    if (project.stage === "running") {
+    const isInitialQueueRunGo = project.pendingRunAwaitingInput === true && containsTaktGoCommand(text);
+    if (project.stage === "running" && !isInitialQueueRunGo) {
       const depth = project.queuedInputs?.enqueue(text) ?? 0;
       context.ui.notify(
         `⏳ TAKT ${project.label} is executing; input queued (⏳q${depth}). It flushes when the session is ready, or via /taktn:flush.`.replace("/taktn:", "/takt:"),
@@ -707,11 +906,36 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       return;
     }
     if (containsTaktGoCommand(text)) {
+      project.pendingRunAwaitingInput = false;
       this.beginExecTracking(project);
       this.setProjectStage(project, "running");
     }
     project.runner.write(formatTaktPastedInput(text));
     context.ui.notify(`Input sent to TAKT ${project.label}.`, "info");
+  }
+
+  /** Switch the pinned fullscreen-focus target via the command fallback.
+  * Uses the exact same deterministic ordering and transition behavior as the
+  * Ctrl+Alt+Up/Down shortcuts. */
+  async switchTaktFocusSession(args = ""): Promise<void> {
+    const direction = args.trim().toLowerCase();
+    const delta = direction === "previous" || direction === "prev"
+      ? -1
+      : direction === "next"
+      ? 1
+      : 0;
+    if (delta === 0) {
+      this.context?.ui.notify("Usage: /takt:session previous|next", "warning");
+      return;
+    }
+    if (this.inputMode !== "takt" || this.focusView === undefined) {
+      this.context?.ui.notify(
+        "TAKT session navigation requires fullscreen focus (takt mode).",
+        "warning",
+      );
+      return;
+    }
+    this.focusView.switchTarget(delta);
   }
 
   async cycleOrSetInputMode(args = ""): Promise<TaktInputMode> {
@@ -750,11 +974,14 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       mode = "pi";
     }
 
-    this.clearTerminalInputCapture();
     this.inputMode = mode;
 
-    if (mode === "takt" && context?.hasUI) {
-      this.terminalInputUnsubscribe = context.ui.onTerminalInput((data) => this.handleTaktFocusInput(data));
+    if (mode === "takt") {
+      // The fullscreen focused view becomes the single owner of human input;
+      // no global terminal-input forwarding may run in parallel.
+      void this.openTaktFullscreenFocus();
+    } else {
+      this.closeTaktFocusView("external-close");
     }
 
     this.syncInputModeStatus();
@@ -1236,6 +1463,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       }
       project.execTracking = undefined;
       project.promptPreview = undefined;
+      this.setProjectStage(project, signal?.aborted ? "stopped" : "failed");
       this.notifyProjects();
       throw error;
     }
@@ -1275,7 +1503,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     options: { provider?: string; model?: string; replace?: boolean } = {},
     signal?: AbortSignal,
     onUpdate?: (message: string) => void,
-  ): Promise<{ profile: string; cwd: string; provider: string; model?: string; replaced: boolean }> {
+  ): Promise<{ profile: string; cwd: string; provider: string; model?: string; workflow?: string; replaced: boolean }> {
     const context = this.context;
     if (!context?.hasUI) {
       throw new Error("TAKT bridge requires an interactive Pi UI");
@@ -1323,11 +1551,18 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       // Requeue is TAKT's default resume action. Send a literal Enter so no
       // bracketed-paste control bytes can leak into the selection UI.
       project.runner.write("\r");
-      await waitForFreshTerminalOutput(project.runner, menuVersion, signal, TAKT_RESUME_MENU_TIMEOUT_MS, "resume");
+      await waitForTaktResumeAccepted(project.runner, menuVersion, signal, TAKT_RESUME_MENU_TIMEOUT_MS);
       this.setProjectStage(project, "running", onUpdate, `TAKT resumed in ${project.label}.`);
       await this.setInputMode("pi-auto", { quiet: true });
       context.ui.notify(`TAKT resumed for ${project.label}. Input mode: pi-auto.`, "info");
-      return { profile: profile.name, cwd: project.cwd, provider, ...(model ? { model } : {}), replaced };
+      return {
+        profile: profile.name,
+        cwd: project.cwd,
+        provider,
+        ...(model ? { model } : {}),
+        ...(resumableRun?.workflow ? { workflow: resumableRun.workflow } : {}),
+        replaced,
+      };
     } catch (error) {
       await stopWaitDispose(project.runner, undefined, TAKT_LIFECYCLE_TIMEOUT_MS);
       this.setProjectStage(project, signal?.aborted ? "stopped" : "failed");
@@ -1537,6 +1772,66 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     return { ...local, profile: profileName, registered: true };
   }
 
+  private async selectWorkflowForProject(project: ManagedProject): Promise<string | undefined> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      return undefined;
+    }
+    const catalog = assertWorkflowCatalogReady(await resolveWorkflowCatalog(project.cwd, {
+      taktCommand: process.env.TAKT_COMMAND ?? "takt",
+    }));
+    const labels = catalog.workflows.map((workflow) => [
+      workflow.name,
+      workflow.layer,
+      workflow.categories.join(" / ") || "Other",
+      workflow.description ?? "",
+    ].filter(Boolean).join(" · "));
+    const selected = await openSearchableSelect(
+      context,
+      `Workflow for ${project.label} (${catalog.workflows.length}; category/search)`,
+      labels,
+    );
+    if (!selected) {
+      return undefined;
+    }
+    const index = labels.indexOf(selected);
+    return catalog.workflows[index]?.name;
+  }
+
+  private async selectTaskExecutionPolicy(
+    project: ManagedProject,
+  ): Promise<TaktTaskExecutionPolicy | undefined> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      return undefined;
+    }
+    const worktreeChoice = await context.ui.select(
+      `Worktree for ${project.label} (choose every task)`,
+      ["Create isolated worktree", "Use project checkout"],
+    );
+    if (!worktreeChoice) {
+      return undefined;
+    }
+    const prChoice = await context.ui.select(
+      `PR delivery for ${project.label} (choose every task)`,
+      worktreeChoice === "Create isolated worktree"
+        ? ["No PR", "Regular PR", "Draft PR"]
+        : ["No PR"],
+    );
+    if (!prChoice) {
+      return undefined;
+    }
+    const prMode: TaktPrMode = prChoice === "Draft PR"
+      ? "draft"
+      : prChoice === "Regular PR"
+        ? "regular"
+        : "none";
+    return {
+      worktree: worktreeChoice === "Create isolated worktree",
+      prMode,
+    };
+  }
+
   /**
    * Per-step Pi model selection: workflow → steps → model per step →
    * merged into <project>/.takt/runtime.yaml as runtime-v1 profiles/targets.
@@ -1696,7 +1991,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       );
       return;
     }
-    await project.acp.close();
+    await project.enqueueClient.close();
     await project.runner.dispose();
     this.projects.delete(project.id);
     this.persistProjects();
@@ -1770,6 +2065,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       this.flushQueuedInputsFor(project, { auto: true });
     }
     if (stage === "stopped" || stage === "completed" || stage === "failed") {
+      project.pendingRunAwaitingInput = undefined;
       project.queuedInputs?.clearAll();
       void this.showLive(false);
     }
@@ -1844,7 +2140,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       clearInterval(this.refreshTimer);
       this.refreshTimer = undefined;
     }
-    this.clearTerminalInputCapture();
+    this.closeTaktFocusView("external-close");
     this.inputMode = "pi";
     this.clearStatusRefreshError();
     this.context?.ui.setStatus(STATUS_KEY, undefined);
@@ -1886,7 +2182,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
 
     const label = normalized.split(/[\\/]/).filter(Boolean).at(-1) ?? normalized;
-    const acp = new TaktAcpClient({ cwd: normalized });
+    const enqueueClient = new TaktTaskQueue({ cwd: normalized });
     let project: ManagedProject;
     const queuedInputs = createTaktInputQueue([], () => {
       if (project) this.syncProjectControlState(project);
@@ -1899,19 +2195,28 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         if (!project || !context?.hasUI) {
           return;
         }
-        if (
-          project.stage !== "stopping" &&
-          project.stage !== "failed" &&
-          project.stage !== "stopped" &&
-          project.stage !== "completed"
-        ) {
+        // A manual stop (or an exit whose outcome was already settled by a
+        // status refresh) is not a run failure: no 🔴 outcome notification.
+        const settledBefore = project.stage === "stopping" ||
+          project.stage === "stopped" ||
+          project.stage === "failed" ||
+          project.stage === "completed";
+        if (!settledBefore) {
           this.setProjectStage(project, code === 0 ? "completed" : "failed");
         } else {
           this.notifyProjects();
         }
         project.execTracking = undefined;
-        const outcome = code === 0 ? "finished" : "exited with errors";
-        context.ui.notify(`TAKT ${project.label} ${outcome} (exit ${code}).`, code === 0 ? "info" : "error");
+        if (!settledBefore) {
+          // Run outcome notification: bridge-owned runs only, once per exit.
+          // Success gets a ✅ info; failure an 🔴 error.
+          context.ui.notify(
+            code === 0
+              ? `✅ TAKT ${project.label} finished.`
+              : `🔴 TAKT ${project.label} failed (exit ${code}).`,
+            code === 0 ? "info" : "error",
+          );
+        }
         if ((this.inputMode === "takt" || this.inputMode === "pi-auto") && !this.activeRunningProject()) {
           void this.setInputMode("pi", { quiet: true });
         }
@@ -1922,7 +2227,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       id,
       cwd: normalized,
       label,
-      acp,
+      enqueueClient,
       runner,
       stage: "idle",
       queuedInputs,
@@ -1972,6 +2277,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       await this.refreshProject(project, { includeTaskList: true });
       return true;
     } catch (error) {
+      this.statusRefreshErrorMessage = errorMessage(error);
       this.context?.ui.notify(
         `TAKT status check failed for ${project.label}: ${errorMessage(error)}`,
         "error",
@@ -2227,11 +2533,20 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
   private hasDisplayableProject(): boolean {
     // Session-owned view only: externally started TAKT activity must not mount
     // or keep the live widget here. Explicit diagnostics (/takt:status,
-    // takt_read_screen) remain available for external runs.
-    return [...this.projects.values()].some((project) =>
-      !isTerminalProjectStage(project.stage) &&
-      (project.runner.isRunning || project.runner.hasSession),
-    );
+    // takt_read_screen) remain available for external runs. A retained run
+    // outcome (completed/failed) keeps the widget mounted; a stopped session
+    // never does.
+    return [...this.projects.values()].some((project) => {
+      if (project.stage === "stopped") {
+        return false;
+      }
+      return (
+        project.runner.isRunning ||
+        project.runner.hasSession ||
+        project.stage === "completed" ||
+        project.stage === "failed"
+      );
+    });
   }
 
   private activeRunningProject(): ManagedProject | undefined {
@@ -2261,41 +2576,112 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       ?? [...this.projects.values()].find((project) => project.summary !== undefined);
   }
 
-  private handleTaktFocusInput(data: string): { consume: boolean } {
-    // Keep the mode-cycle shortcut alive while takt focus owns the PTY:
-    // intercept both shortcuts before forwarding so the user is never locked out.
-    if (TAKT_KEYBOARD.match(data) === "cycle-input-mode") {
-      void this.cycleInputMode();
-      return { consume: true };
-    }
-
-    const activeForQueue = this.activeRunningProject();
-    if (
-      activeForQueue?.stage === "running" &&
-      !data.startsWith("\u001b") &&
-      data !== "\r" &&
-      data !== "\n"
-    ) {
-      // Workflow mid-execution: buffer printable keystrokes instead of letting
-      // them vanish into the running TAKT process.
-      activeForQueue.queuedInputs?.enqueue(data);
-      return { consume: true };
-    }
-
-    const project = this.activeRunningProject();
-    if (!project) {
-      void this.setInputMode("pi", { quiet: true });
-      this.context?.ui.notify("TAKT focus ended because no bridge-owned session is running.", "warning");
-      return { consume: true };
-    }
-
-    project.runner.write(data);
-    return { consume: true };
+  /** Bridge-owned running sessions eligible for fullscreen focus, in shared deterministic order. */
+  eligibleFocusSessions(): TaktFocusSession[] {
+    const currentProjectId = this.context ? projectPathKey(this.context.cwd) : undefined;
+    const eligible = [...this.projects.values()]
+      .filter((project) => project.runner.isRunning)
+      .map((project): TaktFocusSession => ({
+        id: project.id,
+        label: project.label,
+        cwd: project.cwd,
+        get terminal() {
+          return project.runner.terminal;
+        },
+        inputMode: "takt",
+        isRunning: () => project.runner.isRunning,
+        write: (data) => project.runner.write(data),
+        resize: (columns, rows) => project.runner.resize(columns, rows),
+        subscribe: (listener) => project.runner.subscribe(listener),
+      }));
+    return orderTaktFocusSessions(eligible);
   }
 
-  private clearTerminalInputCapture(): void {
-    this.terminalInputUnsubscribe?.();
-    this.terminalInputUnsubscribe = undefined;
+  private async openTaktFullscreenFocus(): Promise<void> {
+    const context = this.context;
+    if (!context?.hasUI || this.focusViewOpenPromise !== undefined) {
+      return;
+    }
+    const eligible = this.eligibleFocusSessions();
+    if (eligible.length === 0) {
+      await this.setInputMode("pi", { quiet: true });
+      context.ui.notify("No running bridge-owned TAKT session to focus.", "warning");
+      return;
+    }
+    const generation = ++this.focusGeneration;
+    const currentProjectId = projectPathKey(context.cwd);
+    this.focusViewOpenPromise = context.ui.custom<void>((tui, _theme, _keybindings, done) => {
+      let viewRef: TaktFullscreenFocusView | undefined;
+      const view = new TaktFullscreenFocusView({
+        sessions: eligible,
+        initialSessionId: currentProjectId,
+        callbacks: {
+          requestRender: () => tui.requestRender(),
+          notify: (message, level) => context.ui.notify(message, level === "warning" ? "warning" : "info"),
+          onModeCycle: () => {
+            void this.cycleInputMode();
+          },
+          onExit: (result) => {
+            // The host overlay must always close, even when a newer
+            // generation superseded this view (mode switch / shutdown).
+            done();
+            if (generation === this.focusGeneration && viewRef === this.focusView) {
+              this.handleTaktFocusExit(result);
+            }
+          },
+        },
+      });
+      viewRef = view;
+      this.focusView = view;
+      return {
+        render: (width: number) =>
+          view.render(width, Math.max(4, Number(tui.terminal?.rows ?? 24))),
+        invalidate: () => view.invalidate(),
+        handleInput: (data: string) => view.handleInput(data),
+      };
+    }, {
+      overlay: true,
+      overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%", margin: 0 },
+    });
+    try {
+      await this.focusViewOpenPromise;
+    } finally {
+      this.focusViewOpenPromise = undefined;
+      if (this.focusView !== undefined && generation === this.focusGeneration) {
+        // The host closed the component without our onExit path running.
+        this.focusView.close("external-close");
+        this.focusView = undefined;
+        this.focusGeneration += 1;
+      }
+    }
+  }
+
+  private closeTaktFocusView(reason: TaktFocusExitResult["reason"]): void {
+    this.focusGeneration += 1;
+    this.focusView?.close(reason);
+    this.focusView = undefined;
+  }
+
+  private handleTaktFocusExit(result: TaktFocusExitResult): void {
+    this.focusView = undefined;
+    const label = result.session?.label ?? "session";
+    if (result.reason === "user-escape") {
+      this.context?.ui.notify(`Left TAKT focus (${label}).`, "info");
+      void this.setInputMode("pi", { quiet: true });
+      return;
+    }
+    if (result.reason === "runner-ended") {
+      const otherRunning = this.eligibleFocusSessions().filter((session) => session.id !== result.session?.id).length;
+      this.context?.ui.notify(
+        `TAKT ${label} finished.${otherRunning > 0 ? ` ${otherRunning} other session(s) still running.` : ""}`,
+        "info",
+      );
+      // Never re-pin automatically: return straight to Pi so the next
+      // keystroke cannot reach another session unexpectedly.
+      void this.setInputMode("pi", { quiet: true });
+      return;
+    }
+    // external-close: the caller already manages mode state and notifications.
   }
 
   private syncInputModeStatus(): void {
@@ -2481,7 +2867,7 @@ async function shutdownManagedProject(
 ): Promise<void> {
   const failures: unknown[] = [];
   try {
-    await project.acp.close();
+    await project.enqueueClient.close();
   } catch (error) {
     failures.push(error);
   }
@@ -2501,6 +2887,19 @@ async function shutdownManagedProject(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function filterWorkflowCatalogCategories(
+  categories: WorkflowCatalog["categories"],
+  names: ReadonlySet<string>,
+): WorkflowCatalog["categories"] {
+  return categories.flatMap((category) => {
+    const workflows = category.workflows.filter((name) => names.has(name));
+    const children = filterWorkflowCatalogCategories(category.children, names);
+    return workflows.length > 0 || children.length > 0
+      ? [{ name: category.name, workflows, children }]
+      : [];
+  });
 }
 
 function isTaktTaskListError(error: unknown): boolean {
@@ -2967,6 +3366,47 @@ async function waitForTaktResumeMenu(
   throw new Error(`takt resume did not show the Requeue menu within ${timeoutMs / 1_000} seconds`);
 }
 
+/**
+ * TAKT's resume UI selects its own target run. When that run references a
+ * workflow that no longer exists (e.g. a stale direct-run checkpoint),
+ * Requeue fails with `Workflow "..." not found for direct run "..."` and TAKT
+ * exits. The bridge must not report a successful resume in that case;
+ * surface the failure and the recovery hint instead (queued tasks are
+ * recovered by takt run, not by resume).
+ */
+async function waitForTaktResumeAccepted(
+  runner: TaktRunController,
+  previousScreenVersion: number,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    throwIfAborted(signal);
+    if (!runner.isRunning) {
+      const result = await runner.waitForExit();
+      const staleRunLine = terminalLineContaining(runner.terminal, "not found for direct run");
+      if (staleRunLine !== undefined) {
+        throw new Error(
+          `TAKT resume selected an invalid run: ${staleRunLine.trim()} — recover the queued task with takt run instead`,
+        );
+      }
+      throw new Error(`takt resume requeue failed (exit ${result?.code ?? "unknown"})`);
+    }
+    if (runner.screenVersion > previousScreenVersion) {
+      const staleRunLine = terminalLineContaining(runner.terminal, "not found for direct run");
+      if (staleRunLine !== undefined) {
+        throw new Error(
+          `TAKT resume selected an invalid run: ${staleRunLine.trim()} — recover the queued task with takt run instead`,
+        );
+      }
+      return;
+    }
+    await delay(50);
+  }
+  throw new Error(`takt resume did not acknowledge Requeue within ${timeoutMs / 1_000} seconds`);
+}
+
 async function waitForFreshTerminalOutput(
   runner: TaktRunController,
   previousScreenVersion: number,
@@ -3101,15 +3541,44 @@ export default function register(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "takt_workflow_catalog",
+    label: "TAKT Workflow Catalog",
+    description: "Read the effective TAKT standalone workflow catalog, including builtin workflows, categories, sources, and search data.",
+    promptSnippet: "Read the TAKT workflow catalog before selecting a workflow",
+    promptGuidelines: [
+      "Use after takt_project_setup and before planning a fresh task.",
+      "The catalog follows TAKT project > user-global > builtin precedence and honors builtin disablement settings.",
+      "Only standalone workflows are returned; callable/internal workflows are not selectable.",
+      "If the catalog is unavailable, stop. Do not silently choose default or enqueue/run.",
+      "Use query for case-insensitive id, description, or category search.",
+    ],
+    parameters: TAKT_WORKFLOW_CATALOG_PARAMETERS,
+    async execute(_toolCallId, params, _signal, _onUpdate, context) {
+      const activeRuntime = await getRuntime(context);
+      const catalog = await activeRuntime.workflowCatalog(params.profile?.trim() || "", params.query ?? "");
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(catalog, null, 2),
+        }],
+        details: catalog,
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "takt_enqueue_task",
     label: "TAKT Enqueue Task",
-    description: "Queue a confirmed task through TAKT ACP without starting execution.",
+    description: "Queue a confirmed task by directly writing TAKT's pending task files without starting execution.",
     promptSnippet: "Queue a finalized task in TAKT after Pi-side planning",
     promptGuidelines: [
       "Call only after the task body is finalized and the user has confirmed enqueueing.",
       "Use takt_project_setup first when the named profile or exact target project is not ready.",
-      "This tool creates a pending task only; use takt_exec_prompt or takt-pi-runner for execution.",
+      "This tool creates a pending task only; use takt_run_pending for explicit queue/run execution.",
       "Pass the exact task body unchanged. Do not silently shorten acceptance criteria or verification steps.",
+      "The task body must contain one exact workflow: <id> directive; the directly persisted workflow is verified before success is returned.",
+      "Pass worktree and prMode chosen for this task; never infer either setting from project defaults.",
+      "The persisted worktree/PR settings are verified before success is returned; mismatch fails closed.",
     ],
     parameters: TAKT_ENQUEUE_TASK_PARAMETERS,
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
@@ -3117,13 +3586,55 @@ export default function register(pi: ExtensionAPI): void {
       const result = await activeRuntime.enqueueProfileTask(
         params.profile?.trim() || "pi-docs",
         params.task,
+        { worktree: params.worktree, prMode: params.prMode },
       );
       return {
         content: [{
           type: "text",
-          text: `TAKT task queued: ${result.project}\n${result.cwd}\nstopReason: ${result.stopReason}`,
+          text: [
+            `TAKT task queued: ${result.project}`,
+            result.cwd,
+            `workflow: ${result.workflow}`,
+            `worktree: ${result.executionOptions.worktree}`,
+            `auto_pr: ${result.executionOptions.autoPr}`,
+            `draft_pr: ${result.executionOptions.draftPr}`,
+            `verified: ${result.workflowVerified && result.executionOptionsVerified}`,
+            `status: ${result.status}`,
+            `tasksFile: ${result.tasksFile}`,
+            `taskName: ${result.taskName}`,
+          ].join("\n"),
         }],
         details: result,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "takt_run_pending",
+    label: "TAKT Run Pending",
+    description: "Explicitly run all pending TAKT tasks for a named profile through the shared bridge PTY/widget lifecycle.",
+    promptSnippet: "Run all queued TAKT tasks after the user explicitly asks to execute",
+    promptGuidelines: [
+      "Call only after the user explicitly says to run or execute queued work.",
+      "Planning and takt_enqueue_task never call this tool automatically.",
+      "This runs all pending tasks with public `takt run`; it does not use takt exec or a preset.",
+      "Use takt_read_screen for progress and takt_stop for recovery; do not shell out to takt run.",
+    ],
+    parameters: TAKT_RUN_PENDING_PARAMETERS,
+    async execute(_toolCallId, params, signal, onUpdate, context) {
+      const activeRuntime = await getRuntime(context);
+      const result = await activeRuntime.runPendingProfile(
+        params.profile?.trim() || "pi-docs",
+        signal,
+        (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: {} }),
+      );
+      return {
+        content: [{
+          type: "text",
+          text: `TAKT run started: ${result.profile}\n${result.cwd}\npending: ${result.pending}\npath: queue → takt run`,
+        }],
+        details: result,
+        terminate: true,
       };
     },
   });
@@ -3274,7 +3785,7 @@ export default function register(pi: ExtensionAPI): void {
       return {
         content: [{
           type: "text",
-          text: `TAKT resumed: ${result.profile}\n${result.cwd}\nprovider: ${result.provider}${result.model ? `\nmodel: ${result.model}` : ""}\nmode: pi-auto`,
+          text: `TAKT resumed: ${result.profile}\n${result.cwd}\nprovider: ${result.provider}${result.model ? `\nmodel: ${result.model}` : ""}${result.workflow ? `\nworkflow: ${result.workflow} (locked from checkpoint)` : ""}\nmode: pi-auto`,
         }],
         details: result,
         terminate: true,
@@ -3494,7 +4005,7 @@ pi.registerCommand("takt:flush", {
   });
 
   pi.registerCommand("takt:enqueue", {
-    description: "Queue a TAKT task through ACP; pass a project path to target another folder",
+    description: "Queue a TAKT task after choosing worktree and PR delivery mode",
     handler: async (args, context) => {
       if (!context.hasUI || !runtime) {
         return;
@@ -3610,6 +4121,13 @@ pi.registerCommand("takt:flush", {
     description: "Cycle or set TAKT input mode: pi, takt, or pi-auto",
     handler: async (args, _context) => {
       await runtime?.cycleOrSetInputMode(args);
+    },
+  });
+
+  pi.registerCommand("takt:session", {
+    description: "Switch TAKT fullscreen focus to the previous/next running session",
+    handler: async (args, _context) => {
+      await runtime?.switchTaktFocusSession(args);
     },
   });
 

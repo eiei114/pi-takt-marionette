@@ -1,11 +1,14 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { spawnCommand } from "./process-control.ts";
+import {
+  resolveWorkflowCatalog,
+  resolveWorkflowFilePath,
+  type TaktWorkflowLayer,
+} from "./takt-workflow-catalog.ts";
 
 /** Workflow layers TAKT resolves in project → user → builtin order. */
-export type TaktWorkflowLayer = "project" | "user" | "builtin";
+export type { TaktWorkflowLayer } from "./takt-workflow-catalog.ts";
+export { resetTaktRootCache, resolveTaktInstallRoot } from "./takt-workflow-catalog.ts";
 
 export interface ResolvedWorkflowFile {
   name: string;
@@ -28,144 +31,13 @@ export interface WorkflowStepRef {
   unresolvedCall?: string;
 }
 
-let cachedTaktRootPromise: Promise<string | undefined> | undefined;
-
-export function resetTaktRootCache(): void {
-  cachedTaktRootPromise = undefined;
-}
-
-/**
- * Locate the TAKT install root (the directory holding `builtins/`). Explicit
- * command paths are walked upward; bare commands fall back to the global npm
- * root, then to the command shim directory. Cached because install roots do
- * not change mid-session.
- */
-export function resolveTaktInstallRoot(command = "takt"): Promise<string | undefined> {
-  cachedTaktRootPromise ??= detectTaktInstallRoot(command).catch(() => undefined);
-  return cachedTaktRootPromise;
-}
-
-async function detectTaktInstallRoot(command: string): Promise<string | undefined> {
-  if (/[\\/]/.test(command)) {
-    return findAncestorWithBuiltins(command);
-  }
-  const npmGlobalRoot = await runNpmRootG();
-  if (npmGlobalRoot !== undefined && existsSync(join(npmGlobalRoot, "takt", "builtins"))) {
-    return join(npmGlobalRoot, "takt");
-  }
-  const shimDir = await findCommandDirectory(command);
-  if (shimDir !== undefined) {
-    return findAncestorWithBuiltins(join(shimDir, command));
-  }
-  return undefined;
-}
-
-function findAncestorWithBuiltins(startPath: string): string | undefined {
-  let current = startPath.replace(/[\\/]+$/, "");
-  let lastSeparator = Math.max(current.lastIndexOf("/"), current.lastIndexOf("\\"));
-  while (lastSeparator > 0) {
-    current = current.slice(0, lastSeparator);
-    if (existsSync(join(current, "builtins"))) {
-      return current;
-    }
-    lastSeparator = Math.max(current.lastIndexOf("/"), current.lastIndexOf("\\"));
-  }
-  return undefined;
-}
-
-function runNpmRootG(): Promise<string | undefined> {
-  return new Promise((resolvePromise) => {
-    const resolved = process.platform === "win32" ? "npm.cmd" : "npm";
-    let child: ReturnType<typeof spawnCommand>;
-    try {
-      child = spawnCommand(resolved, ["root", "-g"], {
-        cwd: process.cwd(),
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch {
-      resolvePromise(undefined);
-      return;
-    }
-    let stdout = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.once("error", () => resolvePromise(undefined));
-    child.once("close", (code) => {
-      const root = stdout.trim().split(/\r?\n/)[0];
-      resolvePromise(code === 0 && root.length > 0 ? root : undefined);
-    });
-  });
-}
-
-function findCommandDirectory(command: string): Promise<string | undefined> {
-  return new Promise((resolvePromise) => {
-    const lookup = process.platform === "win32" ? "where.exe" : "which";
-    let child: ReturnType<typeof spawnCommand>;
-    try {
-      child = spawnCommand(lookup, [command], {
-        cwd: process.cwd(),
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch {
-      resolvePromise(undefined);
-      return;
-    }
-    let stdout = "";
-    child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.once("error", () => resolvePromise(undefined));
-    child.once("close", () => {
-      const firstLine = stdout.trim().split(/\r?\n/)[0];
-      if (firstLine === undefined || firstLine.length === 0) {
-        resolvePromise(undefined);
-        return;
-      }
-      const separator = Math.max(firstLine.lastIndexOf("/"), firstLine.lastIndexOf("\\"));
-      resolvePromise(separator > 0 ? firstLine.slice(0, separator) : undefined);
-    });
-  });
-}
-
 /** Resolve a workflow name against project, user-global, then builtin layers. */
 export async function resolveWorkflowFile(
   cwd: string,
   name: string,
   taktCommand = "takt",
 ): Promise<ResolvedWorkflowFile | undefined> {
-  const safeName = sanitizeWorkflowName(name);
-  if (safeName.length === 0) {
-    return undefined;
-  }
-
-  const projectPath = findWorkflowFileInDir(join(cwd, ".takt", "workflows"), safeName);
-  if (projectPath !== undefined) {
-    return { name: safeName, layer: "project", path: projectPath };
-  }
-
-  const userPath = findWorkflowFileInDir(join(homedir(), ".takt", "workflows"), safeName);
-  if (userPath !== undefined) {
-    return { name: safeName, layer: "user", path: userPath };
-  }
-
-  const taktRoot = await resolveTaktInstallRoot(taktCommand);
-  if (taktRoot !== undefined) {
-    for (const language of ["en", "ja"]) {
-      const builtinPath = findWorkflowFileInDir(
-        join(taktRoot, "builtins", language, "workflows"),
-        safeName,
-      );
-      if (builtinPath !== undefined) {
-        return { name: safeName, layer: "builtin", path: builtinPath };
-      }
-    }
-  }
-  return undefined;
+  return resolveWorkflowFilePath(cwd, name, { taktCommand });
 }
 
 /** List workflow names visible to TAKT: project + user layers, then builtin en/ja. */
@@ -173,44 +45,10 @@ export async function listWorkflowNames(
   cwd: string,
   taktCommand = "takt",
 ): Promise<Array<{ name: string; layer: TaktWorkflowLayer }>> {
-  const found = new Map<string, TaktWorkflowLayer>();
-  const collectDir = (dir: string, layer: TaktWorkflowLayer): void => {
-    if (!existsSync(dir)) {
-      return;
-    }
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isFile() || !/\.ya?ml$/i.test(entry.name)) {
-        continue;
-      }
-      found.set(entry.name.replace(/\.ya?ml$/i, ""), layer);
-    }
-  };
-
-  collectDir(join(cwd, ".takt", "workflows"), "project");
-  collectDir(join(homedir(), ".takt", "workflows"), "user");
-  const taktRoot = await resolveTaktInstallRoot(taktCommand);
-  if (taktRoot !== undefined) {
-    for (const language of ["en", "ja"]) {
-      collectDir(join(taktRoot, "builtins", language, "workflows"), "builtin");
-    }
-  }
-  return [...found.entries()]
-    .map(([name, layer]) => ({ name, layer }))
+  const catalog = await resolveWorkflowCatalog(cwd, { taktCommand });
+  return catalog.workflows
+    .map(({ name, layer }) => ({ name, layer }))
     .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function sanitizeWorkflowName(name: string): string {
-  return name.trim().replace(/[\\/]/g, "");
-}
-
-function findWorkflowFileInDir(dir: string, name: string): string | undefined {
-  for (const extension of [".yaml", ".yml"]) {
-    const candidate = join(dir, `${name}${extension}`);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return undefined;
 }
 
 /**

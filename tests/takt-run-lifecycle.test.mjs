@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { terminalContainsText, TaktRunController } from "../lib/takt-run-controller.ts";
@@ -62,6 +63,23 @@ test("natural PTY exit reconciles to completed and remains disposable", async ()
     if (controller.isRunning || controller.hasSession) {
       await controller.dispose();
     }
+  }
+});
+
+test("malformed broker descriptor is removed before starting a replacement broker", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-invalid-descriptor-"));
+  const identity = typeof process.getuid === "function" ? String(process.getuid()) : userInfo().username;
+  const runtimeDir = join(tmpdir(), `.pm-${createHash("sha256").update(identity).digest("hex").slice(0, 6)}`);
+  const descriptorPath = join(runtimeDir, `${createHash("sha256").update(cwd).digest("hex").slice(0, 20)}.json`);
+  const controller = new TaktRunController({ cwd, command: process.execPath, cols: 40, rows: 4 });
+
+  mkdirSync(runtimeDir, { recursive: true });
+  writeFileSync(descriptorPath, "{\"version\":1", "utf8");
+  try {
+    await controller.start(["-e", "process.exit(0)"]);
+    assert.equal((await controller.waitForExit(5_000))?.code, 0);
+  } finally {
+    if (controller.isRunning || controller.hasSession) await controller.shutdown();
   }
 });
 

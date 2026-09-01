@@ -75,7 +75,7 @@ export function describeTaktInputMode(
     case "pi":
       return "Pi editor focus; TAKT input only via /takt:send or tools";
     case "takt":
-      return `TAKT focus; keys go to the active bridge-owned PTY (switch back with ${cycleShortcut}, /takt:mode, or ${compatibilityShortcut})`;
+      return `TAKT fullscreen focus; keys go to the pinned bridge-owned PTY (Esc returns to Pi; switch back with ${cycleShortcut}, /takt:mode, or ${compatibilityShortcut})`;
     case "pi-auto":
       return "Pi-auto; Pi may send allowed follow-ups to the active bridge-owned PTY";
   }

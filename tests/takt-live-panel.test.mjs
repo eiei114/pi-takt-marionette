@@ -47,6 +47,64 @@ test("live widget renders the PTY screen instead of raw cursor escapes", async (
   terminal.dispose();
 });
 
+test("normal buffer with scrollback renders the current bottom viewport, not row zero", async () => {
+  const terminal = new Terminal({ cols: 12, rows: 3, scrollback: 100, allowProposedApi: true });
+  await new Promise((resolve) => {
+    terminal.write("line-01\r\nline-02\r\nline-03\r\nline-04", resolve);
+  });
+
+  // Buffer holds four lines but only three visible rows: the viewport must
+  // show the bottom page (lines 02-04), never stale top-of-scrollback line-01.
+  const lines = renderTaktTerminal(terminal);
+  assert.ok(lines.some((line) => line.includes("line-02")), String(lines));
+  assert.ok(lines.some((line) => line.includes("line-03")));
+  assert.ok(lines.some((line) => line.includes("line-04")));
+  assert.ok(lines.every((line) => !line.includes("line-01")), String(lines));
+  assert.equal(lines.length, 3);
+  terminal.dispose();
+});
+
+test("cursor marker stays on the correct rendered row after normal-buffer scrollback", async () => {
+  const { CURSOR_MARKER } = await import("@earendil-works/pi-tui");
+  const terminal = new Terminal({ cols: 12, rows: 3, scrollback: 100, allowProposedApi: true });
+  await new Promise((resolve) => {
+    terminal.write("row-one\r\nrow-two\r\nrow-three\r\nlast", resolve);
+  });
+
+  const lines = renderTaktTerminal(terminal, { showCursor: true });
+  // Cursor sits after "last" on the absolute buffer row rendered as index 2.
+  const cursorLine = lines.findIndex((line) => line.includes(CURSOR_MARKER));
+  assert.ok(cursorLine >= 0, "cursor marker missing");
+  assert.equal(cursorLine, 2);
+  assert.match(lines[cursorLine].replace(CURSOR_MARKER, ""), /last/);
+  terminal.dispose();
+});
+
+test("alternate-screen output keeps rendering from its own screen origin", async () => {
+  const terminal = new Terminal({ cols: 12, rows: 3, scrollback: 100, allowProposedApi: true });
+  await new Promise((resolve) => {
+    terminal.write("scroll-a\r\nscroll-b\r\nscroll-c\r\nscroll-d", resolve);
+  });
+  await new Promise((resolve) => {
+    terminal.write("\u001b[?1049h\u001b[HALT-TOP\r\nALT-MID\r\nALT-BOT", resolve);
+  });
+
+  const lines = renderTaktTerminal(terminal);
+  assert.match(lines[0] ?? "", /ALT-TOP/);
+  assert.match(lines[1] ?? "", /ALT-MID/);
+  assert.match(lines[2] ?? "", /ALT-BOT/);
+  assert.ok(lines.every((line) => !line.includes("scroll-")), String(lines));
+
+  // Full-screen TUI redraw at home position still lands on row zero.
+  await new Promise((resolve) => terminal.write("\u001b[HREDRAWN", resolve));
+  const redrawn = renderTaktTerminal(terminal);
+  assert.match(redrawn[0] ?? "", /^REDRAWN|REDRAWN/);
+
+  await new Promise((resolve) => terminal.write("\u001b[?1049l", resolve));
+  assert.ok(renderTaktTerminal(terminal).some((line) => line.includes("scroll-d")));
+  terminal.dispose();
+});
+
 test("live widget keeps Pi focus and shows the current TAKT screen", async () => {
   const terminal = new Terminal({ cols: 24, rows: 20, allowProposedApi: true });
   await new Promise((resolve) => terminal.write("first\r\nsecond", resolve));
@@ -218,7 +276,7 @@ test("project stack hides observed pending activity entirely; use /takt:status i
   assert.ok(lines.some((line) => line.includes("no active sessions")));
 });
 
-test("project stack hides bridge sessions after stop, failure, or natural completion", () => {
+test("project stack retains run outcomes: stopped hides, completed and failed stay", () => {
   const runner = {
     terminal: undefined,
     hasSession: true,
@@ -226,13 +284,116 @@ test("project stack hides bridge sessions after stop, failure, or natural comple
     resize() {},
   };
 
-  for (const stage of ["stopped", "failed", "completed"]) {
-    const lines = renderTaktProjectStack([
-      { id: "finished", label: "finished", cwd: "C:/finished", runner, stage },
-    ], 40);
-    assert.ok(lines.every((line) => !line.includes("[finished]")));
-    assert.ok(lines.some((line) => line.includes("no active sessions")));
-  }
+  // A manually stopped session is never rendered as success.
+  const stopped = renderTaktProjectStack([
+    { id: "finished", label: "finished", cwd: "C:/finished", runner, stage: "stopped" },
+  ], 40);
+  assert.ok(stopped.every((line) => !line.includes("[finished]")));
+  assert.ok(stopped.some((line) => line.includes("no active sessions")));
+
+  // A finished run stays visible as a ✅ outcome row until the next run.
+  const completed = renderTaktProjectStack([
+    { id: "done", label: "done", cwd: "C:/done", runner, stage: "completed",
+      summary: {
+        cwd: "C:/done", status: "completed", running: 0, pending: 0, blocked: 0,
+        failed: 0, completed: 1, stale: 0,
+        runs: [{ slug: "r1", task: "t", workflow: "w", status: "completed", sessionStatus: "completed" }],
+      } },
+  ], 60);
+  assert.ok(completed.some((line) => line.includes("✅ done")), String(completed));
+  assert.ok(completed.every((line) => !line.includes("no active sessions")));
+
+  // A failed run stays visible as a conclusion-only 🔴 row (no reason detail).
+  const failed = renderTaktProjectStack([
+    { id: "bad", label: "bad", cwd: "C:/bad", runner, stage: "failed",
+      summary: {
+        cwd: "C:/bad", status: "failed", running: 0, pending: 0, blocked: 0,
+        failed: 1, completed: 0, stale: 0,
+        runs: [{ slug: "r2", task: "t", workflow: "w", status: "failed", sessionStatus: "completed",
+          failure: "some long failure reason that must stay out of the row" }],
+      } },
+  ], 80);
+  assert.ok(failed.some((line) => line.includes("🔴 bad") && line.includes("❌")), String(failed));
+  assert.ok(failed.every((line) => !line.includes("failure reason")), String(failed));
+});
+
+test("project stack shows the completion duration on the retained success row", () => {
+  const now = Date.parse("2026-08-20T00:12:00.000Z");
+  const lines = renderTaktProjectStack([{
+    id: "finished",
+    label: "finished",
+    cwd: "C:/finished",
+    runner: { terminal: undefined, hasSession: true, isRunning: false, resize() {} },
+    stage: "completed",
+    summary: {
+      cwd: "C:/finished",
+      status: "completed",
+      running: 0, pending: 0, blocked: 0, failed: 0, completed: 1, stale: 0,
+      runs: [{
+        slug: "finished-run", task: "finished task", workflow: "default",
+        status: "completed", sessionStatus: "completed",
+        startTime: new Date(now - 720_000).toISOString(),
+        endTime: new Date(now - 180_000).toISOString(),
+      }],
+    },
+  }], 80, "pi", { now });
+
+  assert.ok(lines.some((line) => line.includes("✅ finished") && line.includes("9m")), String(lines));
+});
+
+test("project stack keeps multiple retained outcome rows, newest first", () => {
+  const runner = {
+    terminal: undefined,
+    hasSession: true,
+    isRunning: false,
+    resize() {},
+  };
+  const makeSummary = (endTime) => ({
+    cwd: "C:/p", status: "completed", running: 0, pending: 0, blocked: 0,
+    failed: 0, completed: 1, stale: 0,
+    runs: [{ slug: "r", task: "t", workflow: "w", status: "completed",
+      sessionStatus: "completed", endTime }],
+  });
+  const lines = renderTaktProjectStack([
+    { id: "older", label: "older", cwd: "C:/older", runner, stage: "completed",
+      summary: makeSummary("2026-08-20T00:10:00.000Z") },
+    { id: "newer", label: "newer", cwd: "C:/newer", runner, stage: "completed",
+      summary: makeSummary("2026-08-20T00:20:00.000Z") },
+  ], 60);
+
+  assert.ok(lines.some((line) => line.includes("✅ older")), String(lines));
+  assert.ok(lines.some((line) => line.includes("✅ newer")), String(lines));
+  const newerIndex = lines.findIndex((line) => line.includes("✅ newer"));
+  const olderIndex = lines.findIndex((line) => line.includes("✅ older"));
+  assert.ok(newerIndex >= 0 && olderIndex >= 0);
+  assert.ok(newerIndex < olderIndex, `expected newer outcome above older: ${String(lines)}`);
+});
+
+test("project stack replaces the retained outcome row once the next run starts", () => {
+  const runner = {
+    terminal: undefined,
+    hasSession: true,
+    isRunning: true,
+    resize() {},
+  };
+  const lines = renderTaktProjectStack([{
+    id: "again",
+    label: "again",
+    cwd: "C:/again",
+    runner,
+    stage: "running",
+    summary: {
+      cwd: "C:/again", status: "live", running: 1, pending: 0, blocked: 0,
+      failed: 0, completed: 1, stale: 0,
+      runs: [{
+        slug: "next", task: "t", workflow: "w",
+        status: "running", sessionStatus: "live", currentStep: "plan",
+      }],
+    },
+  }], 60, "pi", { now: Date.parse("2026-08-20T00:00:00.000Z") });
+
+  assert.ok(lines.some((line) => line.includes("🟢 again")), String(lines));
+  assert.ok(lines.every((line) => !line.includes("✅ again")), String(lines));
 });
 
 test("project stack keeps a live PTY when only a historical run is completed", () => {
@@ -449,4 +610,109 @@ test("active rows tick a live elapsed timer from run start", () => {
   }], 80, "pi", { now });
 
   assert.ok(lines.some((line) => line.includes("⏱ 04:32")));
+});
+
+test("elideMiddle keeps head…tail and stays inside the width budget", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  const name = "this-is-a-very-long-project-folder-name-that-would-overflow";
+
+  assert.equal(elideMiddle("short", 10), "short");
+  const elided = elideMiddle(name, 20);
+  assert.ok(elided.includes("…"), elided);
+  assert.ok(visibleWidth(elided) <= 20, `width ${visibleWidth(elided)} > 20`);
+  assert.ok(elided.startsWith("this-is"), elided);
+  assert.ok(elided.endsWith("overflow"), elided);
+  // Head and tail share the budget around the ellipsis.
+  assert.ok(visibleWidth(elided) >= 19, `wasted budget: ${visibleWidth(elided)}`);
+});
+
+test("elideMiddle is CJK-aware: wide characters count double", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  const name = "あいうえおかきくけこさしすせそたちつてと";
+  const elided = elideMiddle(name, 12);
+  assert.ok(visibleWidth(elided) <= 12, `width ${visibleWidth(elided)} > 12`);
+  assert.ok(elided.includes("…"), elided);
+});
+
+test("elideMiddle degrades gracefully on tiny budgets", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  assert.equal(elideMiddle("anything", 1), "…");
+  const two = elideMiddle("abcdefghij", 2);
+  assert.ok(visibleWidth(two) <= 2, two);
+});
+
+test("allocateNameWidths drops step first, then workflow, label last", async () => {
+  const { allocateNameWidths } = await import("../lib/takt-live-panel.ts");
+  const wide = allocateNameWidths(30, true, true, true);
+  assert.ok(wide.label >= wide.workflow && wide.workflow >= wide.step, String(wide));
+  assert.equal(wide.label + wide.workflow + wide.step, 30);
+  const tight = allocateNameWidths(9, true, true, true);
+  assert.equal(tight.step, 0, String(tight));
+  assert.ok(tight.label > 0, String(tight));
+  // The step slot is the last priority: unused leftover budget simply stays
+  // unused when the step is absent.
+  const noStep = allocateNameWidths(30, true, true, false);
+  assert.equal(noStep.step, 0);
+  assert.equal(noStep.label + noStep.workflow, 24, String(noStep));
+  // Dropping the top-priority label passes its budget to workflow and step.
+  const noLabel = allocateNameWidths(30, false, true, true);
+  assert.equal(noLabel.label, 0);
+  assert.equal(noLabel.workflow, 9, String(noLabel));
+  assert.equal(noLabel.step, 21, String(noLabel));
+});
+
+test("long names elide but the elapsed timer always stays fully visible", () => {
+  const now = Date.parse("2026-08-20T00:04:32.000Z");
+  const run = {
+    slug: "r",
+    task: "t",
+    workflow: "a-very-long-workflow-name-that-would-overflow-the-row",
+    status: "running",
+    sessionStatus: "live",
+    workflowSteps: ["implement-a-very-long-step-name-that-would-overflow"],
+    currentStep: "implement-a-very-long-step-name-that-would-overflow",
+    startTime: new Date(now - 272_000).toISOString(),
+  };
+  const label = "a-very-very-long-project-folder-name-that-would-overflow-the-row";
+  for (const width of [30, 40, 60, 80]) {
+    const lines = renderTaktProjectStack([{
+      id: "a",
+      label,
+      cwd: "C:/a",
+      runner: { terminal: undefined, hasSession: true, isRunning: true, resize() {} },
+      stage: "running",
+      summary: { cwd: "C:/a", status: "live", running: 1, pending: 0, blocked: 0,
+        failed: 0, completed: 0, stale: 0, runs: [run] },
+    }], width, "pi", { now });
+    const row = lines.at(-1) ?? "";
+    assert.ok(row.includes("⏱ 04:32"), `width ${width}: ${row}`);
+    assert.ok(row.includes("…"), `width ${width}: ${row}`);
+    assert.ok(visibleWidth(row) <= width, `width ${width}: ${visibleWidth(row)} > ${width}: ${row}`);
+  }
+});
+
+test("retained outcome row keeps its duration when the project name is huge", () => {
+  const now = Date.parse("2026-08-20T00:12:00.000Z");
+  const label = "some-absurdly-long-project-folder-name-that-would-overflow-any-row";
+  const lines = renderTaktProjectStack([{
+    id: "a",
+    label,
+    cwd: "C:/a",
+    runner: { terminal: undefined, hasSession: true, isRunning: false, resize() {} },
+    stage: "completed",
+    summary: {
+      cwd: "C:/a", status: "completed", running: 0, pending: 0, blocked: 0,
+      failed: 0, completed: 1, stale: 0,
+      runs: [{
+        slug: "r", task: "t", workflow: "w", status: "completed", sessionStatus: "completed",
+        startTime: new Date(now - 720_000).toISOString(),
+        endTime: new Date(now - 180_000).toISOString(),
+      }],
+    },
+  }], 44, "pi", { now });
+
+  const row = lines.at(-1) ?? "";
+  assert.ok(row.includes("· 9m"), row);
+  assert.ok(row.includes("…"), row);
+  assert.ok(visibleWidth(row) <= 44, `${visibleWidth(row)} > 44: ${row}`);
 });

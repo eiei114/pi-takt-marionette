@@ -87,6 +87,13 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+class InvalidBrokerDescriptorError extends Error {
+  constructor(path: string, cause?: unknown) {
+    super(`Invalid TAKT broker descriptor: ${path}${cause ? ` (${errorMessage(cause)})` : ""}`);
+    this.name = "InvalidBrokerDescriptorError";
+  }
+}
+
 /** Encode multiline input as one bracketed terminal paste plus Enter. */
 export function formatTaktPastedInput(value: string): string {
   const normalized = value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
@@ -102,6 +109,32 @@ export function terminalContainsText(terminal: XtermTerminal | undefined, text: 
   return false;
 }
 
+/**
+ * Return the first buffer line containing the text, or undefined when absent.
+ * Like {@link terminalContainsText}, this reads the parsed terminal buffer
+ * rather than the PTY process state.
+ */
+export function terminalLineContaining(
+  terminal: XtermTerminal | undefined,
+  text: string,
+): string | undefined {
+  if (!terminal || !text) {
+    return undefined;
+  }
+  const buffer = terminal.buffer.active;
+  for (let row = 0; row < buffer.length; row += 1) {
+    const line = buffer.getLine(row)?.translateToString(true);
+    if (line?.includes(text)) {
+      return line;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Check the last non-empty buffer line. Scrollback still contains the previous
+ * prompt, so a contains-anywhere check must not satisfy post-submit readiness.
+ */
 export function terminalEndsWithText(terminal: XtermTerminal | undefined, text: string): boolean {
   if (!terminal || !text) return false;
   const buffer = terminal.buffer.active;
@@ -139,6 +172,7 @@ export class TaktRunController {
   private restoredControlState: TaktRunControlState = {};
   private controlSyncPromise: Promise<void> = Promise.resolve();
   private controlSyncError: Error | undefined;
+  private controlSyncSequence = 0;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly options: TaktRunControllerOptions;
   private readonly screenListeners = new Set<() => void>();
@@ -219,13 +253,19 @@ export class TaktRunController {
     this.restoredControlState = structuredClone(controlState);
     if (this.socket && !this.socket.destroyed) {
       const nextState = structuredClone(this.restoredControlState);
+      const sequence = ++this.controlSyncSequence;
       this.controlSyncError = undefined;
       this.controlSyncPromise = this.controlSyncPromise
         .then(async () => {
           await this.request("control", { controlState: nextState });
+          if (sequence === this.controlSyncSequence) {
+            this.controlSyncError = undefined;
+          }
         })
         .catch((error: unknown) => {
-          this.controlSyncError = error instanceof Error ? error : new Error(String(error));
+          if (sequence === this.controlSyncSequence) {
+            this.controlSyncError = error instanceof Error ? error : new Error(String(error));
+          }
         });
     }
   }
@@ -519,6 +559,10 @@ export class TaktRunController {
     try {
       descriptor = readBrokerDescriptor(this.options.cwd);
     } catch (error) {
+      if (isInvalidBrokerDescriptorError(error)) {
+        try { unlinkSync(paths.descriptorPath); } catch { /* another starter won */ }
+        return;
+      }
       if (isMissingBrokerError(error)) return;
       throw error;
     }
@@ -560,7 +604,19 @@ function brokerPaths(cwd: string): { id: string; directory: string; descriptorPa
 
 function readBrokerDescriptor(cwd: string): BrokerDescriptor {
   const { descriptorPath } = brokerPaths(cwd);
-  const value = JSON.parse(readFileSync(descriptorPath, "utf8")) as Partial<BrokerDescriptor>;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(descriptorPath, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      throw error;
+    }
+    throw new InvalidBrokerDescriptorError(descriptorPath, error);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new InvalidBrokerDescriptorError(descriptorPath);
+  }
+  const value = parsed as Partial<BrokerDescriptor>;
   if (
     value.version !== 1 ||
     !Number.isSafeInteger(value.pid) ||
@@ -568,7 +624,7 @@ function readBrokerDescriptor(cwd: string): BrokerDescriptor {
     typeof value.authToken !== "string" ||
     value.authToken.length < 32
   ) {
-    throw new Error(`Invalid TAKT broker descriptor: ${descriptorPath}`);
+    throw new InvalidBrokerDescriptorError(descriptorPath);
   }
   return value as BrokerDescriptor;
 }
@@ -603,7 +659,11 @@ function delay(ms: number): Promise<void> {
 
 function isMissingBrokerError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return code === "ENOENT" || code === "ECONNREFUSED" || code === "EPIPE";
+  return isInvalidBrokerDescriptorError(error) || code === "ENOENT" || code === "ECONNREFUSED" || code === "EPIPE";
+}
+
+function isInvalidBrokerDescriptorError(error: unknown): boolean {
+  return error instanceof InvalidBrokerDescriptorError;
 }
 
 function errorMessage(error: unknown): string {

@@ -35,7 +35,7 @@ export function isCtrlAltTSequence(data: string): boolean {
   if (data === "\u001b\u0014") {
     return true;
   }
-  return /^\u001b\[(?:27;7t|20;7t|27;7u|20;7u)$/.test(data);
+  return /^\u001b\[(?:27;7;116~|116;7u)$/.test(data);
 }
 
 export function isF6Sequence(data: string): boolean {

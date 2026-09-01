@@ -1,6 +1,7 @@
 import {
   CURSOR_MARKER,
   truncateToWidth,
+  visibleWidth,
   type Component,
 } from "@earendil-works/pi-tui";
 import type { Terminal } from "@xterm/headless";
@@ -18,6 +19,8 @@ import {
   type TaktRunSnapshot,
   type TaktSummary,
 } from "./takt-types.ts";
+
+const ELLIPSIS = "…";
 
 const DEFAULT_COLUMNS = 120;
 const DEFAULT_ROWS = 30;
@@ -267,6 +270,22 @@ export function renderTaktProjectStack(
   return fitTaktWidgetLines(lines, columns);
 }
 
+/**
+ * Buffer row that the visible viewport starts at. Normal buffers use the
+ * current viewport (xterm keeps it pinned to the bottom page while output
+ * streams), alternate buffers always start at their own row zero.
+ */
+export function taktViewportOrigin(
+  buffer: { readonly type: string; readonly viewportY: number; readonly length: number },
+  rows: number,
+): number {
+  if (buffer.type === "alternate") {
+    return 0;
+  }
+  const maxOrigin = Math.max(0, buffer.length - Math.max(1, rows));
+  return Math.min(Math.max(0, buffer.viewportY), maxOrigin);
+}
+
 /** Localized header: session count plus plain-word running/done detail. */
 function headerLine(projects: readonly TaktProjectWidgetEntry[]): string {
   const count = projects.length;
@@ -275,8 +294,7 @@ function headerLine(projects: readonly TaktProjectWidgetEntry[]): string {
 }
 
 /** One compact row per session: spinner + status emoji + label + run state. */
-export function sessionRow(project: TaktProjectWidgetEntry, width: number, now: number): string {
-  void width;
+export function sessionRow(project: TaktProjectWidgetEntry, columns: number, now: number): string {
   const run = findActiveRun(project.summary);
   const hb = heartbeat(run, project.runner?.lastOutputAt, now);
   const spin = taktSpinnerFrame(now, hb.intervalMs);
@@ -284,31 +302,37 @@ export function sessionRow(project: TaktProjectWidgetEntry, width: number, now: 
   // already covers timing); hide them. Project-defined names stay visible.
   const rawWorkflow = run !== undefined ? workflowLabel(run) : undefined;
   const workflow = rawWorkflow !== undefined && !EXEC_NAME_PATTERN.test(rawWorkflow)
-    ? truncateInline(rawWorkflow, 22)
+    ? normalizeInline(rawWorkflow)
     : undefined;
-  const workflowTag = workflow !== undefined ? ` · ${workflow}` : "";
   // Bridge lifecycle states that precede or wrap the actual TAKT run.
   if (project.stage === "clearing") {
-    return `${spin} 🟡 ${project.label}${workflowTag} — ${t("clearingStep")}`;
+    return composeTaktRow(`${spin} 🟡 `, project.label, workflow, undefined, ` — ${t("clearingStep")}`, columns);
   }
   if (project.stage === "starting" || isPreparingProject(project)) {
-    return `${spin} ⏳ ${project.label}${workflowTag} — ${t("startingStep")}`;
+    return composeTaktRow(`${spin} ⏳ `, project.label, workflow, undefined, ` — ${t("startingStep")}`, columns);
   }
   if (project.stage === "waiting_prompt") {
-    return `${spin} ⏳ ${project.label}${workflowTag} — ${t("waitingPromptStep")}`;
+    return composeTaktRow(`${spin} ⏳ `, project.label, workflow, undefined, ` — ${t("waitingPromptStep")}`, columns);
   }
   if (project.stage === "pasting") {
     const chars = project.promptPreview?.length ?? 0;
-    return `${spin} 📋 ${project.label}${workflowTag} — ${t("pastingPromptStep", { chars })}`;
+    return composeTaktRow(
+      `${spin} 📋 `,
+      project.label,
+      workflow,
+      undefined,
+      ` — ${t("pastingPromptStep", { chars })}`,
+      columns,
+    );
   }
   if (project.stage === "sending_go") {
-    return `${spin} 📨 ${project.label}${workflowTag} — ${t("sendingGoStep")}`;
+    return composeTaktRow(`${spin} 📨 `, project.label, workflow, undefined, ` — ${t("sendingGoStep")}`, columns);
   }
 
   const failureText = run?.failure ?? run?.reason;
   if (run?.status === "stale" || run?.sessionStatus === "stale") {
-    const detail = failureText ? ` · ${truncateInline(failureText, 40)}` : "";
-    return `${spin} ⚠️  ${project.label}${workflowTag} — ${t("staleState")}${detail}`;
+    const detail = failureText ? ` · ${elideMiddle(failureText, 40)}` : "";
+    return composeTaktRow(`${spin} ⚠️  `, project.label, workflow, undefined, ` — ${t("staleState")}${detail}`, columns);
   }
 
   if (run && isActiveRunState(run)) {
@@ -317,24 +341,164 @@ export function sessionRow(project: TaktProjectWidgetEntry, width: number, now: 
     const queued = project.queueDepth !== undefined && project.queueDepth > 0
       ? ` ⏳q${project.queueDepth}`
       : "";
-    return `${spin} ${dot} ${project.label}${workflowTag} ${describeActiveRun(run)}${queued}${elapsed ? ` · ${elapsed}` : ""}`;
+    return composeTaktRow(
+      `${spin} ${dot} `,
+      project.label,
+      workflow,
+      stepSlot(describeActiveRun(run)),
+      `${queued}${elapsed ? ` · ${elapsed}` : ""}`,
+      columns,
+    );
   }
 
   if (project.stage === "failed") {
-    const detail = failureText ? ` · ${truncateInline(failureText, 44)}` : "";
-    return `🔴 ${project.label}${workflowTag} ❌ ${t("failedState")}${detail}`;
+    // Conclusion only: the failure reason stays available in diagnostics.
+    return composeTaktRow(`🔴 `, project.label, workflow, undefined, ` ❌ ${t("failedState")}`, columns);
   }
 
   // Running without run metadata yet (or right after a lifecycle transition).
   if (project.runner?.isRunning) {
-    return `${spin} 🟢 ${project.label}${workflowTag} — ${t("workingState")}`;
+    return composeTaktRow(`${spin} 🟢 `, project.label, workflow, undefined, ` — ${t("workingState")}`, columns);
   }
 
   const finishedRun = project.summary?.runs.find((candidate) => candidate.status === "completed");
   const duration = finishedRun?.startTime && finishedRun?.endTime
     ? formatDuration(Date.parse(finishedRun.startTime), Date.parse(finishedRun.endTime))
     : undefined;
-  return `✅ ${project.label}${workflowTag} — ${t("doneState")}${duration ? ` · ${duration}` : ""}`;
+  return composeTaktRow(
+    `✅ `,
+    project.label,
+    workflow,
+    undefined,
+    ` — ${t("doneState")}${duration ? ` · ${duration}` : ""}`,
+    columns,
+  );
+}
+
+interface TaktStepSlot {
+  /** Adornments outside the elidable step name: `🔨 ` and position/worker suffixes. */
+  fixed: string;
+  name: string;
+}
+
+/** Split a composed active-run description into elidable name + fixed adornments. */
+export function stepSlot(description: string): TaktStepSlot | undefined {
+  const match = /^🔨 (.*)$/s.exec(description);
+  return match ? { fixed: "🔨 ", name: match[1] } : undefined;
+}
+
+/**
+ * Assemble one widget row under a hard width budget: the tail (status text,
+ * queue marker, elapsed timer) is reserved first and never elided; the label,
+ * workflow, and step names share the remaining width by priority
+ * (label > workflow > step), each with a floor so long names degrade to a
+ * readable head…tail instead of being sliced at the right edge.
+ */
+function composeTaktRow(
+  prefix: string,
+  label: string,
+  workflow: string | undefined,
+  step: TaktStepSlot | undefined,
+  tail: string,
+  columns: number,
+): string {
+  const stepFixedW = step ? visibleWidth(step.fixed) : 0;
+  // Separator widths: ` · ` between label and workflow, space before step.
+  const separatorW = (workflow !== undefined && workflow.length > 0 ? 3 : 0) + (step ? 1 : 0);
+  const fixedW = visibleWidth(prefix) + visibleWidth(tail) + stepFixedW + separatorW;
+  const remaining = Math.max(0, columns - fixedW);
+  if (remaining <= 0) {
+    // Nothing left for names after reserving the fixed part (time included):
+    // collapse to a bare ellipsis and let the width clamp make the final call.
+    return truncateToWidth(`${prefix}${ELLIPSIS}${tail}`, columns);
+  }
+  const widths = allocateNameWidths(
+    remaining,
+    label.length > 0,
+    workflow !== undefined && workflow.length > 0,
+    step !== undefined,
+  );
+  let line = prefix;
+  line += elideMiddle(label, widths.label);
+  if (workflow && workflow.length > 0 && widths.workflow > 0) {
+    line += ` · ${elideMiddle(workflow, widths.workflow)}`;
+  }
+  if (step && widths.step > 0) {
+    line += ` ${step.fixed}${elideMiddle(step.name, widths.step)}`;
+  }
+  line += tail;
+  return line;
+}
+
+/**
+ * Width-aware name budgets by priority: label gets up to half the remaining
+ * width (floor 8), workflow up to 30% (floor 6), and step takes what is left
+ * (dropped first when space runs out). Absent slots yield their budget.
+ */
+export function allocateNameWidths(
+  remaining: number,
+  hasLabel: boolean,
+  hasWorkflow: boolean,
+  hasStep: boolean,
+): { label: number; workflow: number; step: number } {
+  let rest = Math.max(0, remaining);
+  const label = hasLabel ? Math.min(rest, Math.max(8, Math.round(remaining * 0.5))) : 0;
+  rest = Math.max(0, rest - label);
+  const workflow = hasWorkflow ? Math.min(rest, Math.max(6, Math.round(remaining * 0.3))) : 0;
+  rest = Math.max(0, rest - workflow);
+  const step = hasStep ? rest : 0;
+  return { label, workflow, step };
+}
+
+/**
+ * Width-aware middle elision: keep the head and tail of an over-long name
+ * with `…` between them. CJK and wide emoji count double, so the result is
+ * guaranteed to stay within `maxWidth` display columns.
+ */
+export function elideMiddle(value: string, maxWidth: number): string {
+  const normalized = normalizeInline(value);
+  if (maxWidth <= 1) {
+    return ELLIPSIS;
+  }
+  if (visibleWidth(normalized) <= maxWidth) {
+    return normalized;
+  }
+  const chars = [...normalized];
+  const body = maxWidth - 1;
+  const half = Math.floor(body / 2);
+  let head = "";
+  let headW = 0;
+  for (const ch of chars) {
+    const w = charWidth(ch);
+    if (headW + w > half) {
+      break;
+    }
+    head += ch;
+    headW += w;
+  }
+  let tail = "";
+  let tailW = 0;
+  for (let i = chars.length - 1; i >= 0; i -= 1) {
+    const w = charWidth(chars[i]);
+    if (tailW + w > body - headW) {
+      break;
+    }
+    tail = chars[i] + tail;
+    tailW += w;
+  }
+  if (head.length === 0 && tail.length === 0 && chars.length > 0) {
+    // Single code point wider than the budget: keep just the ellipsis.
+    return ELLIPSIS;
+  }
+  return `${head}${ELLIPSIS}${tail}`;
+}
+
+function charWidth(ch: string): number {
+  return visibleWidth(ch);
+}
+
+function normalizeInline(value: string): string {
+  return value.trim().replaceAll(/\s+/g, " ");
 }
 
 export function describeActiveRun(run: TaktRunSnapshot): string {
@@ -346,11 +510,6 @@ export function describeActiveRun(run: TaktRunSnapshot): string {
     : "";
   const stepName = run.currentStep ?? "working";
   return `🔨 ${stepName}${position}${workerSuffix}`;
-}
-
-function truncateInline(value: string, maxLength: number): string {
-  const normalized = value.trim().replaceAll(/\s+/g, " ");
-  return normalized.length > maxLength ? `${normalized.slice(0, Math.max(1, maxLength - 1))}…` : normalized;
 }
 
 function formatDuration(startMs: number, endMs: number): string {
@@ -372,12 +531,21 @@ function isActiveRunState(run: Pick<TaktRunSnapshot, "status" | "sessionStatus">
   return run.status === "running" || run.sessionStatus === "live";
 }
 
+/**
+ * Run outcome retention: a finished run's success/failure row stays visible
+ * in this session-owned widget until the project's next run starts or the Pi
+ * session ends. Completed and failed stages are retained. A manually stopped
+ * session hides immediately — the user already knows it stopped, and it must
+ * never be mistaken for a successful ✅ run.
+ */
 function isDisplayableProject(project: TaktProjectWidgetEntry, now: number): boolean {
-  if (isTerminalProjectStage(project.stage)) {
+  if (project.stage === "stopped") {
     return false;
   }
   return Boolean(
     project.runner?.isRunning ||
+    project.stage === "completed" ||
+    project.stage === "failed" ||
     (!project.runner?.hasSession && project.stage !== undefined && project.stage !== "idle"),
   );
 }
@@ -385,10 +553,6 @@ function isDisplayableProject(project: TaktProjectWidgetEntry, now: number): boo
 /** True when this Pi session owns the TAKT process behind the entry. */
 function hasOwnedRunner(project: TaktProjectWidgetEntry): boolean {
   return Boolean(project.runner?.hasSession || project.runner?.isRunning);
-}
-
-function isTerminalProjectStage(stage: TaktExecStage | undefined): boolean {
-  return stage === "stopped" || stage === "completed" || stage === "failed";
 }
 
 /** Keep custom widget output inside Pi's terminal-width invariant. */
@@ -428,7 +592,18 @@ function findActiveRun(summary: TaktSummary | undefined): TaktRunSnapshot | unde
 }
 
 function compareProjectActivity(left: TaktProjectWidgetEntry, right: TaktProjectWidgetEntry): number {
-  return projectActivityScore(right) - projectActivityScore(left) || left.label.localeCompare(right.label);
+  return projectActivityScore(right) - projectActivityScore(left) ||
+    retainedOutcomeTime(right) - retainedOutcomeTime(left) ||
+    left.label.localeCompare(right.label);
+}
+
+/** Latest retained-run end time: newer outcomes surface above older ones. */
+function retainedOutcomeTime(project: TaktProjectWidgetEntry): number {
+  const ended = project.summary?.runs
+    .filter((run) => run.status === "completed" || run.status === "failed")
+    .map((run) => (run.endTime !== undefined ? Date.parse(run.endTime) : Number.NEGATIVE_INFINITY))
+    .filter((value) => Number.isFinite(value));
+  return ended && ended.length > 0 ? Math.max(...ended) : Number.NEGATIVE_INFINITY;
 }
 
 function projectActivityScore(project: TaktProjectWidgetEntry): number {
@@ -441,11 +616,16 @@ function projectActivityScore(project: TaktProjectWidgetEntry): number {
 export function renderTaktTerminal(terminal: Terminal, options: { showCursor?: boolean } = {}): string[] {
   const buffer = terminal.buffer.active;
   const lines: string[] = [];
-  const cursorRow = options.showCursor ? buffer.cursorY : -1;
+  // Normal buffers keep scrollback above the live viewport: rendering absolute
+  // row zero would draw stale top-of-scrollback lines instead of the latest
+  // reply. Start at the current viewport origin instead. Alternate screens
+  // have no scrollback and keep their absolute screen origin.
+  const origin = taktViewportOrigin(buffer, terminal.rows);
+  const cursorRow = options.showCursor ? buffer.baseY + buffer.cursorY - origin : -1;
   const cursorColumn = options.showCursor ? buffer.cursorX : -1;
 
   for (let row = 0; row < terminal.rows; row += 1) {
-    const line = buffer.getLine(row);
+    const line = buffer.getLine(origin + row);
     const rendered = renderLine(
       line as unknown as TerminalLine | undefined,
       terminal.cols,

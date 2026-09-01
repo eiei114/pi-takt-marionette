@@ -93,8 +93,10 @@ function createTaktCommand(directory) {
     "    process.exit(7);",
     "  }",
     "  const taskMode = process.env.TEST_TASK_MODE;",
-    "  const tasks = taskMode === \"external\" || taskMode === \"stale\"",
-    "    ? [{ kind: \"running\", ownerPid: Number(process.env.TEST_OWNER_PID), stage: \"external-stage\" }]",
+    "  const tasks = taskMode === \"pending\"",
+    "    ? [{ kind: \"pending\", name: \"pending-task\" }]",
+    "    : taskMode === \"external\" || taskMode === \"stale\"",
+    "      ? [{ kind: \"running\", ownerPid: Number(process.env.TEST_OWNER_PID), stage: \"external-stage\" }]",
     "    : [];",
     "  process.stdout.write(JSON.stringify({ tasks }) + \"\\n\");",
     "  process.exit(0);",
@@ -104,12 +106,18 @@ function createTaktCommand(directory) {
     "  if (process.env.TEST_CLEAR_MODE === \"fail\") process.exit(7);",
     "  process.exit(0);",
     "}",
-    "if (operation === \"resume\") {",
+    "if (operation === \"run\") {",
+    "  event(\"run\");",
+    "  process.stdout.write(\"Running pending tasks…\\r\\n\");",
+    "  process.on(\"SIGINT\", () => { event(\"signal:run\"); process.exit(130); });",
+    "  setTimeout(() => process.exit(0), 80);",
+    "}",
+    "else if (operation === \"resume\") {",
     "  event(`resume:${args.join(\"|\")}`);",
     "  process.on(\"SIGINT\", () => { event(\"signal:resume\"); process.exit(130); });",
     "  process.stdout.write(\"Select action:\\r\\n> Requeue\\r\\n  Cancel\\r\\n\");",
     "  process.stdin.setEncoding(\"utf8\");",
-    "  process.stdin.once(\"data\", () => { event(\"resume:requeue\"); process.stdout.write(\"Resuming workflow…\\r\\n\"); });",
+    "  process.stdin.once(\"data\", () => { event(\"resume:requeue\"); if (process.env.TEST_RESUME_MODE === \"stale-run\") { process.stdout.write(\"[ERROR] Workflow \\\"exec-x\\\" not found for direct run \\\"20260817-x\\\"\\r\\n\"); setTimeout(() => process.exit(1), 30); } else { process.stdout.write(\"Resuming workflow…\\r\\n\"); } });",
     "} else {",
     "if (operation !== \"exec\") {",
     "  event(`workflow:${args.join(\"|\")}`);",
@@ -168,6 +176,7 @@ function configureEnvironment(root, command, logPath, taskMode, listMode = "ok")
     ["TEST_CLEAR_MODE", process.env.TEST_CLEAR_MODE],
     ["TEST_PROMPT_DELAY_MS", process.env.TEST_PROMPT_DELAY_MS],
     ["TEST_WORKFLOW_EXIT_CODE", process.env.TEST_WORKFLOW_EXIT_CODE],
+    ["TEST_RESUME_MODE", process.env.TEST_RESUME_MODE],
   ]);
   process.env.APPDATA = root;
   process.env.XDG_CONFIG_HOME = root;
@@ -360,7 +369,7 @@ test("reload reconnects to the broker-owned PTY and restores its screen", async 
     assert.match(before.content[0].text, /Assistant>/);
 
     await first.events.get("session_shutdown")?.({ reason: "reload" }, firstContext);
-    assert.equal(logLines(logPath).includes("signal:workflow"), false);
+    assert.equal(logLines(logPath).includes("signal:reload-test"), false);
 
     second = loadExtension();
     secondContext = createContext(project);
@@ -498,6 +507,65 @@ test("resume requeues a checkpoint with the requested Pi model and without clear
   }
 });
 
+test("resume fails fast when TAKT targets a stale run without a workflow", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-resume-stale-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  process.env.TEST_RESUME_MODE = "stale-run";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    await assert.rejects(
+      invoke(tools, "takt_resume_run", { profile: "pi-docs", provider: "pi" }, context),
+      /not found for direct run/,
+    );
+    const lines = logLines(logPath);
+    assert.ok(lines.includes("resume:--provider|pi|resume"));
+    assert.ok(lines.includes("resume:requeue"));
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("run pending starts all queued tasks through the shared bridge PTY lifecycle", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-run-pending-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    const catalog = await invoke(tools, "takt_workflow_catalog", { profile: "pi-docs" }, context);
+    assert.equal(catalog.details.ready, true);
+    assert.deepEqual(catalog.details.workflows.map((entry) => entry.name), ["default"]);
+    const result = await invoke(tools, "takt_run_pending", { profile: "pi-docs" }, context);
+    assert.equal(result.details.started, true);
+    assert.equal(result.details.pending, 1);
+    await waitFor(() => logLines(logPath).includes("run"));
+    assert.ok(logLines(logPath).includes("run"));
+    const screen = await waitFor(async () => {
+      const current = await invoke(tools, "takt_read_screen", { rows: 4 }, context);
+      return current.details.status === "completed" ? current : undefined;
+    });
+    assert.equal(screen.details.stage, "completed");
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
 async function waitFor(check, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -592,7 +660,12 @@ test("extension replaces owned exec and starts again after natural exit", async 
     assert.equal(completed.stage, "completed");
     assert.equal(completed.lastExit.code, 0);
     assert.equal(typeof completed.pid, "number");
-    assert.equal(context.widgetUpdates.at(-1)?.widget, undefined);
+    // Run outcome retention: the widget stays mounted with the ✅ outcome row
+    // instead of being cleared the moment the run finishes.
+    assert.notEqual(context.widgetUpdates.at(-1)?.widget, undefined);
+    assert.ok(context.notifications.some(
+      (entry) => entry.message.includes("✅ TAKT project finished") && entry.type === "info",
+    ), String(context.notifications.map((entry) => entry.message)));
 
     const third = await invoke(tools, "takt_exec_prompt", {
       profile: "pi-docs",
@@ -648,7 +721,7 @@ test("stopping a bridge-owned PTY clears the live widget", async () => {
   }
 });
 
-test("completed exec workflow clears the widget before interactive PTY exit", async () => {
+test("completed exec workflow keeps the retained outcome widget alive", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-completed-widget-"));
   const project = join(root, "project");
   mkdirSync(project);
@@ -672,8 +745,10 @@ test("completed exec workflow clears the widget before interactive PTY exit", as
     await new Promise((resolve) => setTimeout(resolve, 2_200));
     assert.notEqual(context.widgetUpdates.at(-1)?.widget, undefined);
 
+    // The completed run keeps the widget mounted with the retained ✅/❌ row.
     writeCompletedRunMeta(project);
-    await waitFor(() => context.widgetUpdates.at(-1)?.widget === undefined);
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    assert.notEqual(context.widgetUpdates.at(-1)?.widget, undefined);
     const screen = await invoke(tools, "takt_read_screen", { rows: 4 }, context);
     assert.equal(screen.details.status, "completed");
     assert.equal(screen.details.running, false);

@@ -1,7 +1,9 @@
 import { renderTaktWorkflowProgress } from "./takt-progress.ts";
-import { formatTaktLastExit, type TaktRunSnapshot, type TaktSummary } from "./takt-types.ts";
+import { elideMiddle } from "./takt-live-panel.ts";
+import { formatTaktLastExit, type TaktRunLogDiagnostics, type TaktRunSnapshot, type TaktSummary } from "./takt-types.ts";
 
 const DEFAULT_WIDTH = 96;
+const MAX_LOG_DETAIL_PARTS = 4;
 
 export function renderTaktWidget(summary: TaktSummary, width = DEFAULT_WIDTH): string[] | undefined {
   const hasSomethingToShow = summary.running + summary.pending + summary.blocked + summary.failed + summary.stale > 0;
@@ -54,6 +56,14 @@ export function renderTaktDetails(summary: TaktSummary): string[] {
     lines.push(`last exit: ${formatTaktLastExit(summary.lastExit)}`);
   }
 
+  const diagnosticRun = summary.runs.find((run) =>
+    run.status === "running" || run.status === "stale" || run.status === "failed",
+  );
+  const logDetails = renderLogDetails(diagnosticRun?.logDiagnostics);
+  if (logDetails) {
+    lines.push(logDetails);
+  }
+
   if (summary.runs.length === 0) {
     lines.push("runs: none");
   } else {
@@ -69,10 +79,50 @@ export function renderTaktDetails(summary: TaktSummary): string[] {
   return lines;
 }
 
+function renderLogDetails(logDiagnostics: TaktRunLogDiagnostics | undefined): string | undefined {
+  if (!logDiagnostics) {
+    return undefined;
+  }
+  if (!logDiagnostics.available) {
+    const malformed = logDiagnostics.skippedLines ? ` · ${logDiagnostics.skippedLines} malformed` : "";
+    if (logDiagnostics.reason === "no_logs") {
+      return `log details: no logs${malformed}`;
+    }
+    return `log details: unavailable (${logDiagnostics.reason})${malformed}`;
+  }
+
+  const parts: string[] = [];
+  if (logDiagnostics.step) {
+    parts.push(`step ${logDiagnostics.step}`);
+  }
+  if (logDiagnostics.phase) {
+    parts.push(`phase ${logDiagnostics.phase}`);
+  }
+  if (logDiagnostics.workers) {
+    parts.push(`workers ${logDiagnostics.workers.done}/${logDiagnostics.workers.total}`);
+  }
+  if (logDiagnostics.eventType) {
+    parts.push(logDiagnostics.eventType.replaceAll("_", " "));
+  }
+  if (logDiagnostics.status) {
+    parts.push(logDiagnostics.status);
+  }
+  if (logDiagnostics.message) {
+    parts.push(`error: ${logDiagnostics.message}`);
+  }
+  if (parts.length === 0) {
+    return "log details: no recent events";
+  }
+  return `log details: ${parts.slice(0, MAX_LOG_DETAIL_PARTS).join(" · ")}`;
+}
+
 function renderRunLine(run: TaktRunSnapshot, width: number): string {
-  const step = run.currentStep ? ` · ${run.currentStep}` : "";
   const prefix = `↳ ${run.sessionStatus}: `;
-  return prefix + truncate(`${run.task}${step}`, Math.max(24, width - prefix.length));
+  const stepWidth = run.currentStep ? Math.max(0, Math.round(width * 0.25)) : 0;
+  const taskWidth = Math.max(0, width - prefix.length - stepWidth);
+  const task = elideMiddle(run.task, taskWidth);
+  const stepText = run.currentStep ? ` · ${elideMiddle(run.currentStep, stepWidth)}` : "";
+  return `${prefix}${task}${stepText}`;
 }
 
 export function truncate(value: string, maxLength: number): string {
