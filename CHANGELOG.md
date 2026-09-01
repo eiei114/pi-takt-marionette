@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1 - 2026-09-02
 
 - Hide non-running session history after three days without activity from
   selectors and retained widget rows, without deleting `.takt` task or run
