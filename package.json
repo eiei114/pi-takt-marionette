@@ -19,6 +19,9 @@
     "url": "https://github.com/eiei114/pi-takt-marionette/issues"
   },
   "homepage": "https://github.com/eiei114/pi-takt-marionette#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "extensions/",
     "skills/",

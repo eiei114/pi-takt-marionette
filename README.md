@@ -39,6 +39,7 @@ started outside Marionette remain metadata-only.
 
 ## Prerequisites
 
+- Node.js 20 or later
 - Pi 0.83 or later
 - TAKT 0.61 or later installed as the `takt` command
 - A configured TAKT provider/model
