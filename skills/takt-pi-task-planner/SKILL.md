@@ -22,7 +22,9 @@ skill creates **one pending task**; it does not start `takt run` or
    - explicit non-goals
    - acceptance criteria
    - validation commands or evidence
-   - provider/agent constraints, if any
+   - provider/agent constraints, including a fully qualified
+     `<pi-provider>/<pi-model>` route and approved thinking level for Pi,
+     if any
    - per-task worktree choice and PR mode (`none`, `regular`, or `draft`)
 4. Require a workflow directive from the orchestrator before presenting the
    final body. If it is missing, return to `takt-pi-orchestrator`; planner is

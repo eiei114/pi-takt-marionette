@@ -15,10 +15,13 @@ planner or enqueue does not imply permission to run.
    task is blocking the project.
 2. If a bridge-owned or external session is live, inspect it with
    `takt_read_screen` before suggesting a new run.
-3. Tell the user exactly what will happen: all pending tasks for the named
+3. If the pending task selects `provider: pi` with an explicit model, require
+   `takt-pi-model-preflight` to verify the fully qualified route before asking
+   for execution. A model shown by `pi --list-models` alone is insufficient.
+4. Tell the user exactly what will happen: all pending tasks for the named
    profile will start through the shared `takt run` PTY/widget lifecycle.
-4. Ask for explicit run/execute intent. Until confirmed, stop at this gate.
-5. After confirmation, hand off to `takt-pi-runner`, which calls
+5. Ask for explicit run/execute intent. Until confirmed, stop at this gate.
+6. After confirmation, hand off to `takt-pi-runner`, which calls
    `takt_run_pending`.
 
 ## Done condition

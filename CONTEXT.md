@@ -27,3 +27,21 @@ _Avoid_: 末尾のぶった切り, right-edge clipping
 **Mode-cycle terminal interceptor** (モード切替の端末境界インターセプター):
 The raw-input listener that normalizes F6 and Ctrl+Option+T/Ctrl+Alt+T bytes before Pi's editor or the focused TAKT PTY receives them. It exists as a macOS terminal compatibility path; unknown bytes pass through unchanged.
 _Avoid_: global input forwarding, PTY hijack
+
+**TAKT/Pi provider boundary** (TAKT/Piプロバイダー境界):
+The two-layer model contract in which TAKT's `provider: pi` selects the
+executor and `model: <pi-provider>/<pi-model>` selects the model inside Pi.
+Thinking-level suffixes, when supported by the selected TAKT release, belong
+to the model reference; Pi extension sources are separate from both fields.
+_Avoid_: putting the Pi provider in TAKT's provider field, treating an
+extension source as a model, or treating a DeepSeek provider option as Pi
+model syntax
+
+**Pi model route preflight** (Piモデルルートの事前検証):
+The required check before queueing or launching an explicit Pi model route. It
+compares Pi's candidate list with the embedded TAKT runtime's resolvable
+catalog/overlay, preserves the exact target profile and cwd, and verifies the
+new target run metadata after launch. A stale widget row or PTY-start
+acknowledgement is not run or model evidence.
+_Avoid_: blind model retries, copying credentials, or creating runtime-v1
+configuration as a model-resolution workaround

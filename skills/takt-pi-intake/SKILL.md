@@ -15,7 +15,8 @@ start TAKT during intake.
    search arbitrary folders or infer a similarly named repository.
 2. **Intent** — setup, ask for the next action, plan and queue, run pending,
    inspect, stop, or recover a checkpoint.
-3. **Constraints** — preset/profile, provider/model, Pi-only requirement,
+3. **Constraints** — preset/profile, TAKT executor provider, fully qualified
+   Pi model route when `provider: pi`, Pi-only requirement,
    explicit per-task worktree choice, PR mode (`none`, `regular`, or `draft`),
    and allowed delivery side effects. Do not infer an unset policy.
 4. **Task contract** — goal, scope, non-goals, acceptance criteria, and
@@ -23,6 +24,12 @@ start TAKT during intake.
 
 Use facts already present in the user message, current Pi project, and existing
 profile. Ask one compact question only for the next missing fact.
+
+When the executor is Pi, keep the layers distinct: TAKT's `provider` remains
+`pi`, while `model` is `<pi-provider>/<pi-model>`. Do not accept a bare model
+name, an `opencode-go` value in the TAKT provider field, or extension sources as
+model availability proof. Hand an explicit route to
+`takt-pi-model-preflight` before the task can be queued or run.
 
 ## Done condition
 
