@@ -142,6 +142,45 @@ For DTM Cursor (`dtm-cursor`):
 - Never use shell `taskkill`, `takt run`, or absolute path guessing when the
   bridge tools are available.
 
+## Exec failure playbook
+
+When `takt_exec_prompt` stalls at `awaiting_go` / `Assistant>` or `/go` is
+rejected, the lines above `Assistant>` in `takt_read_screen` name the cause.
+Diagnose in this order:
+
+1. `Pi model "<ref>" was not found` — the model never reached Pi. Check:
+   - `<cwd>/.takt/persona_sessions.json` pins a stale model from a previous
+     failed run. Reset `personaSessions` to `{}` and re-exec with
+     `replace: true`.
+   - `provider/model:thinking` suffix in the preset `model:` (e.g.
+     `...:xhigh`). TAKT's Pi client splits the reference on `/` only and
+     never strips a `:suffix`, so the suffixed id misses the catalog. Put the
+     bare id in `model:` and the level in
+     `provider_options.pi.thinkingLevel`.
+   - New model unknown to TAKT's bundled offline catalog. TAKT resolves Pi
+     models with network refresh disabled, while `pi --list-models` and
+     `pi auth check` refresh from the network — CLI `ready` does not prove
+     TAKT can resolve it. After confirming
+     `pi auth check --model <ref>` is `ready`, merge the model into the
+     built-in provider via `~/.pi/agent/models.json`
+     (`providers.<provider>.models[]` upserts by `id`; built-ins are kept).
+     Mirror `api`, `baseUrl`, `compat`, `thinkingLevelMap`,
+     `contextWindow`, and `maxTokens` from `~/.pi/agent/models-store.json`
+     (the CLI-refreshed store). Inheriting a stale built-in `api`/`baseUrl`
+     surfaces as provider-side errors (e.g. HTTP 500).
+2. `/go` rejected with `Conversation or task text is required` — startup
+   model validation failed, so the pasted prompt was never accepted. Fix the
+   model error above and re-exec; do not resubmit `/go` into the dead
+   session.
+3. Plan aborts as unclear requirements on a bare issue URL — the plan step
+   has no web tools and `auto_fetch: false` means the body never arrives.
+   Embed the full issue title/body/acceptance criteria in the task text
+   (fetch with `gh issue view` first). This applies to `takt run` too.
+4. After any model/config fix, always re-exec with `replace: true` (a fresh
+   PTY picks up `models.json` / preset changes), verify `takt_read_screen`
+   shows the `[assistant] Model:` line with no `Failed` above `Assistant>`,
+   then submit `/go`.
+
 ## Rules
 
 - All TAKT agents, workers, reviewers, replans, and loop judges must use Pi

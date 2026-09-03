@@ -16,6 +16,10 @@ skill creates **one pending task**; it does not start `takt run` or
    repository path.
 2. Inspect the relevant project guidance, issue/PRD, existing implementation,
    and tests. Keep research proportional to the request.
+   When the requirement source is a bare issue/PR URL and the target project
+   sets `auto_fetch: false`, fetch the body (`gh issue view`) and embed the
+   title, body, and acceptance criteria verbatim in the task. Plan steps have
+   no web tools and abort URL-only tasks as unclear requirements.
 3. Discuss and resolve the smallest set of gaps:
    - goal and user-visible outcome
    - in-scope files or boundaries
