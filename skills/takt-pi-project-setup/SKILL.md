@@ -19,6 +19,10 @@ idempotent bootstrap; it is not task creation or execution.
    the readiness evidence. Pass the returned profile unchanged.
 4. If an existing profile points elsewhere, stop. Never use `overwrite: true`
    without explicit permission to move it.
+5. After setup, distinguish scaffold-only changes (for example
+   `.takt/.gitignore` or preset metadata) from task changes. Do not stage or
+   include scaffold-only files in a task/PR unless the user explicitly asks;
+   restore unrelated working-tree changes before delivery.
 
 ## Done condition
 

@@ -29,7 +29,12 @@ the current Pi project, an explicit path, or a named profile:
    every fresh route. It is not a
    reason to substitute the global Pi default; follow **Workflow selection**
    below before planning or execution.
-4. **Task contract** — goal, scope, non-goals, acceptance criteria, and
+4. **Pi model route** — when `provider: pi` is requested, require the fully
+   qualified Pi route (`<pi-provider>/<pi-model>`) and run the model preflight
+   before planning, queueing, execution, or recovery. A `pi --list-models`
+   result is candidate evidence only; it does not prove the embedded TAKT
+   runtime can resolve the route.
+5. **Task contract** — goal, scope, non-goals, acceptance criteria, and
    validation evidence when the request is implementation work.
 
 Do not ask questions whose answers are already explicit in the user request or
@@ -136,6 +141,7 @@ still required. The selected workflow is a task contract, not an exec preset.
 | Resolve target and intent | `takt-pi-intake` |
 | Prepare exact target/profile | `takt-pi-project-setup` |
 | Select and lock a workflow | `takt-pi-workflow-selection` |
+| Validate a Pi provider/model route | `takt-pi-model-preflight` |
 | Discuss requirements, then make a pending task | `takt-pi-task-planner` |
 | Confirm and verify enqueue | `takt-pi-queue-gate` |
 | Ask for final execution intent | `takt-pi-run-gate` |
@@ -160,6 +166,10 @@ resolution so it can inspect current evidence (including the catalog when
 needed) before handing back to this orchestrator or the planner/runner. The
 navigator recommends one next action; it does not bypass workflow selection,
 confirmation, or explicit run intent.
+When `provider: pi` has an explicit model, read
+`../takt-pi-model-preflight/SKILL.md` after workflow selection and before
+planning, queueing, execution, or recovery. Keep the route unchanged through
+the handoff.
 Read `../takt-pi-task-planner/SKILL.md` for the planner route and
 `../takt-pi-runner/SKILL.md` for the runner/recovery route.
 The orchestrator does not replace the planner or runner instructions. It does
@@ -196,6 +206,10 @@ the head branch, and retain the base/head diff context.
 - Project bootstrap is safe and idempotent; it may happen automatically after
   the exact target is known, without turning into queueing or execution.
 - Preserve Pi-only/provider/worktree constraints exactly; do not invent them.
+- For `provider: pi`, preflight the fully qualified model route against both
+  Pi's candidate list and the embedded TAKT model catalog. Do not retry a
+  not-found route blindly, mutate global settings without approval, or create
+  a runtime-v1 configuration merely to work around model resolution.
 - For DTM Cursor, use lane names only to filter catalog search; never bypass
   catalog selection or target an internal workflow. Every fresh route displays
   the effective catalog, then carries `workflow: <id>` into the next skill.

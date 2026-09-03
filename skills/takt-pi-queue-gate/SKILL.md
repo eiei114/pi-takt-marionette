@@ -15,6 +15,8 @@ This phase ends before execution.
 - One locked standalone workflow exists.
 - One explicit worktree choice and PR mode exist; regular/draft PR requires
   `worktree: true`.
+- If the task uses `provider: pi` with an explicit model, the fully qualified
+  route passed model preflight and the result is recorded in the task context.
 - The body contains exactly one literal `workflow: <id>` line.
 - Goal, scope, non-goals, acceptance criteria, and validation are explicit.
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.2 - 2026-09-04
+
+- Add Pi model-route preflight guidance for separating TAKT's executor provider
+  from Pi's fully qualified model route, verifying embedded model availability,
+  and rejecting stale widget/start acknowledgements as run evidence.
+- Clarify safe setup, queue, run, recovery, and model-selection boundaries for
+  the bundled TAKT Marionette skills.
+
 ## 0.6.1 - 2026-09-02
 
 - Hide non-running session history after three days without activity from

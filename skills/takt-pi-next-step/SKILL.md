@@ -12,7 +12,7 @@ hand off to the specialized Skill that owns it.
 ## Route map
 
 ```text
-target → setup → catalog/select → clarify → confirm → enqueue
+target → setup → catalog/select → model preflight → clarify → confirm → enqueue
        → explicit run → inspect/follow-up → validate → deliver
 ```
 
@@ -29,6 +29,8 @@ or use `takt exec` as a shortcut for the queue/run path.
      target needs safe bootstrap;
    - use `takt-pi-workflow-selection` / `takt_workflow_catalog` for every fresh
      task route.
+   - use `takt-pi-model-preflight` for an explicit `provider: pi` model route;
+     `pi --list-models` is candidate evidence, not embedded-runtime proof.
 3. Classify the route using the state table below. Prefer one blocker or one
    user decision over a list of possibilities.
 4. State the next action, why it is next, the tool/Skill that owns it, and the
@@ -44,6 +46,7 @@ or use `takt exec` as a shortcut for the queue/run path.
 | Target/profile unresolved | `takt-pi-intake`; done means exact target, intent, and constraints are known. |
 | Exact target lacks bridge setup | `takt-pi-project-setup`; done means profile and local `.takt` are ready. |
 | Fresh task has no locked workflow | `takt-pi-workflow-selection`; done means one exact catalog id is locked. |
+| Pi task has an explicit model route not yet verified | `takt-pi-model-preflight`; done means the embedded runtime can resolve the exact route. After launch, runner separately verifies target run identity. |
 | Goal or acceptance is unclear | Planner clarification; do not enqueue. |
 | Task body ready but not confirmed | `takt-pi-queue-gate`; show the body and ask to enqueue. |
 | Confirmed body has no verified queue result | `takt-pi-queue-gate` → `takt_enqueue_task`; done means direct workflow and execution-policy verification succeeds. |
@@ -68,6 +71,10 @@ or use `takt exec` as a shortcut for the queue/run path.
 - Queueing requires a finalized body plus user confirmation. Queueing never
   starts execution. Normal execution requires explicit user intent and
   `takt_run_pending`.
+- For `provider: pi`, preserve one fully qualified `<pi-provider>/<pi-model>`
+  route. Preflight it against the embedded TAKT catalog before enqueueing or
+  starting; do not treat a stale widget, `models-store.json`, or a successful
+  PTY acknowledgement as proof of model/task progress.
 - `takt_exec_prompt` is valid only for an explicitly requested instant or
   interactive path. Never shell out to `takt`, use `taskkill`, or guess a cwd
   when bridge tools exist.

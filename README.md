@@ -136,6 +136,23 @@ options as discrete TAKT CLI arguments while retaining bridge-owned PTY output.
 the existing PR branch remain structured execution context. Optional Pi
 extensions are injected into that child run only and do not modify Pi settings.
 
+For Pi execution, keep the two provider layers separate: pass `pi` as TAKT's
+`provider`, and pass a fully qualified Pi route as `model`, such as
+`opencode-go/muse-spark-1.3-contributor`. On TAKT releases that support the
+older global syntax, append the thinking level to the model reference:
+`opencode-go/muse-spark-1.3-contributor:xhigh`. The suffix is a thinking-level
+selector, not another model or provider option; verify the selected TAKT
+release supports it before use.
+
+`pi --list-models` is candidate evidence only. The embedded TAKT runtime may
+use a shipped catalog and `models.json` rather than Pi's persisted
+`models-store.json`, so a listed model can still fail with `Pi model ... was not
+found`. Run the Pi model preflight before queueing or launching, preserve the
+exact target profile/cwd, and inspect target-scoped `.takt/runs/*/meta.json`
+after launch. A stale widget row or a successful PTY-start acknowledgement is
+not proof that the requested run or model is active. Do not create
+`.takt/runtime.yaml` or mutate global model settings as a blind workaround.
+
 For approval-gated execution, pass `goMode: "manual"`. The bridge submits the
 task, waits for TAKT to return to a fresh `Assistant>` prompt, and returns with
 `awaitingGo: true` without sending `/go`. After reviewing the live screen, call

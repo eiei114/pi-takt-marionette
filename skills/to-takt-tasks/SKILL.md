@@ -52,7 +52,10 @@ spec's execution branch/worktree. It never starts TAKT execution.
    regular or draft PR requires `worktree: true`. Never inherit a project
    default or choose between modes when the user has not selected one; missing
    or ambiguous policy fails closed. The aggregate task receives one explicit
-   branch directive, `branch: takt/<spec-slug>`.
+   branch directive, `branch: takt/<spec-slug>`. If the execution provider is
+   Pi, resolve and preserve `provider: pi` plus a fully qualified
+   `<pi-provider>/<pi-model>` route; run `takt-pi-model-preflight` before
+   presenting the queue plan.
 6. After approval, save child issues under `.scratch/<feature>/issues/NN-*.md`.
    AFK issues use `Status: ready-for-agent`; HITL issues use
    `Status: ready-for-human`. Each issue records the parent spec and execution
@@ -75,9 +78,10 @@ queueable AFK child is saved but not enqueued.
    `workflow: <id>` and `branch: takt/<spec-slug>`.
 3. Preflight the target/profile, the single workflow binding, the selected
    execution policy, the spec/group identity, aggregate body hash, duplicate
-   ledger entry, and child-ticket order. A missing or invalid workflow, group
-   identity, policy, or execution request fails closed before direct
-   persistence.
+   ledger entry, and child-ticket order. For Pi execution, also require the
+   model-route preflight result and preserve its exact route. A missing or
+   invalid workflow, group identity, policy, model route, or execution request
+   fails closed before direct persistence.
 4. Show one queue plan containing the spec, branch, workflow, execution policy,
    and all child tickets. Ask for one explicit enqueue confirmation.
 5. After confirmation, call `takt_enqueue_task` exactly once for the aggregate

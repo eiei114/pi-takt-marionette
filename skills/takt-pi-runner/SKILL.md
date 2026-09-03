@@ -43,8 +43,12 @@ manual registration or when the setup tool is unavailable.
 2. If the target profile/project is not ready, call `takt_project_setup` first.
 3. Use the profile returned by setup unchanged. Use `pi-docs` only when the
    target was already explicitly registered as `pi-docs`.
-4. Call `takt_read_screen` first when a session may already be running.
-5. For normal implementation, call `takt_run_pending` only after the user
+4. If the task selects `provider: pi` with an explicit model, run
+   `takt-pi-model-preflight` before starting or resuming. Preserve the fully
+   qualified `<pi-provider>/<pi-model>` route and any supported thinking-level
+   suffix exactly; do not substitute the Pi provider for TAKT's `provider`.
+5. Call `takt_read_screen` first when a session may already be running.
+6. For normal implementation, call `takt_run_pending` only after the user
    explicitly asks to run/execute. It runs **all pending tasks** through the
    shared bridge PTY/widget lifecycle and public `takt run`:
 
@@ -56,7 +60,7 @@ manual registration or when the setup tool is unavailable.
    tool return means the PTY started, not that the task completed; inspect
    `takt_read_screen` and the live widget for progress.
 
-6. Use `takt_exec_prompt` only when the user explicitly requests instant /
+7. Use `takt_exec_prompt` only when the user explicitly requests instant /
    interactive `takt exec` behavior. That path may clear, paste, and submit
    `/go`; it is not the queue/run implementation default.
 
@@ -66,7 +70,8 @@ The orchestrator may provide an exact builtin or project-owned workflow. Use
 `takt_run_workflow` for that route; do not leave `workflow:` as prompt prose and
 do not replace it with the default Pi lane. This direct workflow tool starts
 immediately, so call it only after explicit approval of task, workflow,
-provider/model, temporary extensions, and PR behavior. It has no `/go` phase.
+provider/model, temporary extensions, and PR behavior. If `provider: pi` is
+selected, model preflight must pass before this call. It has no `/go` phase.
 Set `pipeline:true` when `autoPr` or `draftPr` is requested; otherwise the tool
 rejects the configuration before starting TAKT.
 
@@ -124,6 +129,14 @@ For DTM Cursor (`dtm-cursor`):
   from `takt_read_screen` before assuming a hang. `pasting` / `sending_go`
   intentionally show a prompt preview; `live`, `stale`, `completed`, and
   `unknown` describe lifecycle ownership.
+- A successful start acknowledgement proves only that a PTY was created. Read
+  the target's run metadata and require its project/cwd and model context to
+  match the request. The widget may show an older or different project; mark
+  that output stale instead of stopping it, claiming it, or starting a
+  duplicate.
+- If model resolution fails immediately, stop. Do not retry the same route
+  blindly, change the provider, or create runtime-v1 configuration as a
+  workaround. Return to model preflight with the exact not-found diagnostic.
 - Use `takt_set_mode` only when you need an explicit mode change outside the
   automatic post-submit `pi-auto` transition.
 - Never use shell `taskkill`, `takt run`, or absolute path guessing when the
@@ -145,6 +158,10 @@ For DTM Cursor (`dtm-cursor`):
   a fresh Pi reload, stop. Report the exact tool name, profile name, and target
   cwd as a reload/package mismatch; do not use `taskkill`, Computer Use, guessed
   paths, or fall back to Claude/Codex/direct shell execution.
+- `pi --list-models` is candidate evidence only. The embedded TAKT runtime must
+  also have the route in its shipped catalog or approved `models.json` overlay;
+  `models-store.json` alone may not be loaded. Never copy credentials from
+  `auth.json` or mutate global model settings without explicit approval.
 - If the user explicitly requests a different profile, pass that profile name
   and keep the chosen task body unchanged.
 

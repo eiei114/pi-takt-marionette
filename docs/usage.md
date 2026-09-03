@@ -133,6 +133,26 @@ the issue instead of treating it as literal task prose.
 `autoPr` and `draftPr` require `pipeline:true`, matching TAKT's CLI contract;
 the bridge rejects that invalid combination before launching a child process.
 
+### Pi provider/model preflight
+
+For Pi execution, `provider` is the TAKT executor and must remain `pi`.
+`model` is a fully qualified Pi route in the form
+`<pi-provider>/<pi-model>`, for example
+`opencode-go/muse-spark-1.3-contributor`. On older/global TAKT releases that
+support it, add the thinking level after the route:
+`opencode-go/muse-spark-1.3-contributor:xhigh`. This suffix is not a provider
+option or a model name; verify the selected TAKT release's syntax first.
+
+`pi --list-models` only supplies candidates. The embedded TAKT runtime may
+resolve models from its shipped catalog and `models.json` while not loading
+Pi's `models-store.json`, so a candidate can still fail with a model-not-found
+error. The model preflight must verify the exact route before enqueue/run and
+must preserve the target profile/cwd. After launch, inspect the target's
+`.takt/runs/*/meta.json`; the shared widget can show a stale row, and a PTY
+start acknowledgement does not prove model resolution or task progress. Do not
+create `.takt/runtime.yaml` or mutate global model settings just to retry a
+missing route.
+
 Use `takt_stop` to stop a stuck bridge-owned session without confirmation, and
 `takt_set_mode` for explicit mode changes. `takt_read_screen` reports status,
 PID, stage, and last exit so agents can tell `live` / `stale` / `completed` /
@@ -365,8 +385,11 @@ bar tracks bridge stages such as `waiting prompt` and `sending go` instead.
 workflow starts. The command lists steps from project, user-global, and
 builtin workflow YAML (top-level `workflow_call` steps expand one level),
 then shows one type-to-filter dialog per step with every model `pi
---list-models` reports — auth-configured extension providers appear
-automatically, so provider prerequisites stay linked behind the scenes.
+--list-models` reports as candidates — auth-configured extension providers
+appear automatically in Pi's candidate list, but that list does not prove the
+embedded TAKT runtime can resolve the route. Run the model preflight before
+starting the workflow; provider prerequisites stay linked behind the scenes,
+but model availability remains a separate check.
 Choosing `(inherit global default)` leaves a step untouched.
 
 Selections merge into the project's `.takt/runtime.yaml` as runtime-v1
