@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Document the TAKT exec failure playbook in the runner skill: stale
+  `persona_sessions.json` reset, `:thinking` suffix separation into
+  `provider_options.pi.thinkingLevel`, offline-catalog model merge via
+  `~/.pi/agent/models.json` mirrored from `models-store.json`, and the
+  `/go`-rejection retry rule.
+- Require the task planner to embed issue/PR title, body, and acceptance
+  criteria verbatim when the source is a bare URL and the project sets
+  `auto_fetch: false`.
+
 ## 0.6.2 - 2026-09-04
 
 - Add Pi model-route preflight guidance for separating TAKT's executor provider
