@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.4 - 2026-09-05
 
 - Silence the headless xterm screen's parser logs so stray PTY control bytes
   (for example a DEL byte after gray progress styling) no longer dump
