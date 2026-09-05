@@ -146,6 +146,27 @@ export function terminalEndsWithText(terminal: XtermTerminal | undefined, text: 
 }
 
 /**
+ * Build the headless xterm screen that mirrors TAKT PTY output.
+ *
+ * xterm.js reports stray control bytes that legitimately appear in PTY output
+ * (for example a DEL byte trailing gray `\x1b[90m` progress styling) as a
+ * parser error and dumps the whole parser state through `console.error`
+ * (`xterm.js: Parsing error: ...`). Pi surfaces extension-host stderr in its
+ * TUI, so that dump shows up as widget noise even though parsing recovers on
+ * its own. `logLevel: "off"` keeps the shadow screen silent.
+ */
+export function createTaktScreenTerminal(cols: number, rows: number): XtermTerminal {
+  return new Terminal({
+    cols,
+    rows,
+    scrollback: 2_000,
+    convertEol: false,
+    allowProposedApi: true,
+    logLevel: "off",
+  });
+}
+
+/**
  * Controls a detached PTY broker instead of owning node-pty directly. The
  * broker survives Pi's extension reload; a new controller reconnects and
  * rebuilds its xterm screen by replaying the bounded raw transcript.
@@ -484,13 +505,7 @@ export class TaktRunController {
 
   private resetTerminal(cols: number, rows: number): void {
     this.terminalInstance?.dispose();
-    this.terminalInstance = new Terminal({
-      cols,
-      rows,
-      scrollback: 2_000,
-      convertEol: false,
-      allowProposedApi: true,
-    });
+    this.terminalInstance = createTaktScreenTerminal(cols, rows);
   }
 
   private handleDisconnect(error?: Error): void {

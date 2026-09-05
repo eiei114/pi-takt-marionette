@@ -293,7 +293,12 @@ test("exact workflow run forwards workflow, Pi model, extensions, and regular PR
     assert.deepEqual(result.details.extensions, ["npm:context-mode", "npm:pi-fff"]);
     const lines = await waitFor(() => {
       const observed = logLines(logPath);
-      return observed.some((line) => line.startsWith("workflow:")) ? observed : undefined;
+      // The fake TAKT command appends the workflow and extensions lines as two
+      // separate writes; wait for both so a poll between them cannot flake.
+      return observed.some((line) => line.startsWith("workflow:"))
+        && observed.some((line) => line.startsWith("extensions:"))
+        ? observed
+        : undefined;
     });
     assert.ok(lines.includes(
       "workflow:#1478|--workflow|takt-default|--provider|pi|--model|openai-codex/gpt-5.6-luna:max|--repo|nrslib/takt|--pipeline|--auto-pr",
