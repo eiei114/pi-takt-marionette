@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import xterm from "@xterm/headless";
 import {
+  createTaktScreenTerminal,
   formatTaktPastedInput,
   terminalContainsText,
   terminalEndsWithText,
@@ -51,4 +52,26 @@ test("terminalEndsWithText rejects a filled Assistant> input line", async () => 
   assert.equal(terminalContainsText(terminal, "Assistant>"), true);
   assert.equal(terminalEndsWithText(terminal, "Assistant>"), false);
   terminal.dispose();
+});
+
+test("createTaktScreenTerminal stays silent on stray PTY control bytes", async () => {
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => { errors.push(args); };
+  try {
+    const terminal = createTaktScreenTerminal(40, 8);
+    // Gray SGR progress styling followed by a stray DEL is typical TAKT PTY
+    // output. xterm.js flags the DEL as a parser error and would otherwise
+    // dump `xterm.js: Parsing error: ...` plus parser state to the console,
+    // which Pi surfaces in its TUI.
+    await new Promise((resolve) => {
+      terminal.write("gather 1/2 \u001b[90m⠙\u001b[0m working\x7f done", resolve);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(errors.length, 0);
+    assert.equal(terminalContainsText(terminal, "done"), true);
+    terminal.dispose();
+  } finally {
+    console.error = originalError;
+  }
 });

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Silence the headless xterm screen's parser logs so stray PTY control bytes
+  (for example a DEL byte after gray progress styling) no longer dump
+  `xterm.js: Parsing error: ...` parser state into the Pi TUI.
 - Document the TAKT exec failure playbook in the runner skill: stale
   `persona_sessions.json` reset, `:thinking` suffix separation into
   `provider_options.pi.thinkingLevel`, offline-catalog model merge via
