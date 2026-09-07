@@ -459,6 +459,39 @@ test("readRunLogDiagnostics ignores non-object JSONL records and partial tail li
   assert.equal(diagnostics.phase, "execute");
 });
 
+test("readLatestRunLogTail reuses parsed tail when the JSONL file is unchanged", async () => {
+  const { readRunLogDiagnostics, resetRunLogTailCache } = await import("../lib/takt-state.ts");
+  resetRunLogTailCache();
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-tail-cache-"));
+  const slug = "cached-run";
+  const logsDirectory = join(cwd, ".takt", "runs", slug, "logs");
+  mkdirSync(logsDirectory, { recursive: true });
+  const padded = `${"x".repeat(70 * 1024)}\n{"type":"step_start","step":"plan"}\n`;
+  writeFileSync(join(logsDirectory, "run.jsonl"), padded, "utf8");
+
+  readRunLogDiagnostics(cwd, slug);
+  const cachedStart = performance.now();
+  for (let index = 0; index < 100; index += 1) {
+    const diagnostics = readRunLogDiagnostics(cwd, slug);
+    assert.equal(diagnostics.step, "plan");
+  }
+  const cachedMs = performance.now() - cachedStart;
+
+  const uncachedStart = performance.now();
+  for (let index = 0; index < 100; index += 1) {
+    resetRunLogTailCache();
+    const diagnostics = readRunLogDiagnostics(cwd, slug);
+    assert.equal(diagnostics.step, "plan");
+  }
+  const uncachedMs = performance.now() - uncachedStart;
+
+  assert.ok(
+    cachedMs < uncachedMs * 0.6,
+    `expected cached polls (${cachedMs.toFixed(1)}ms) to beat cold reads (${uncachedMs.toFixed(1)}ms)`,
+  );
+  resetRunLogTailCache();
+});
+
 test("readRunSnapshots attaches logDiagnostics for running and failed runs", () => {
   const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-diag-snap-"));
   const slug = "active-run";
