@@ -314,6 +314,20 @@ function readRunWorkspaces(cwd: string): string[] {
 const LOG_TAIL_BYTES = 64 * 1_024;
 const LOG_EXCERPT_MAX_LENGTH = 280;
 const LOG_FIELD_MAX_LENGTH = 120;
+const LOG_TAIL_CACHE_MAX_ENTRIES = 64;
+
+interface LogTailCacheEntry {
+  mtimeMs: number;
+  size: number;
+  result: RunLogTailResult;
+}
+
+const logTailCache = new Map<string, LogTailCacheEntry>();
+
+/** Test seam: clear cached JSONL tail reads between isolated fixtures. */
+export function resetRunLogTailCache(): void {
+  logTailCache.clear();
+}
 const DIAGNOSTIC_EVENT_TYPES = new Set([
   "workflow_start",
   "workflow_complete",
@@ -393,7 +407,11 @@ function readLatestRunLogTail(cwd: string, runSlug: string): RunLogTailResult {
       return { unavailable: true, reason: "no_logs" };
     }
     const logPath = resolve(logsDirectory, latest);
-    const size = statSync(logPath).size;
+    const { mtimeMs, size } = statSync(logPath);
+    const cached = logTailCache.get(logPath);
+    if (cached !== undefined && cached.mtimeMs === mtimeMs && cached.size === size) {
+      return cached.result;
+    }
     let start = 0;
     const handle = openSync(logPath, "r");
     let tailText: string;
@@ -424,7 +442,15 @@ function readLatestRunLogTail(cwd: string, runSlug: string): RunLogTailResult {
         skippedLines += 1;
       }
     }
-    return { events, skippedLines };
+    const result: RunLogTailResult = { events, skippedLines };
+    if (logTailCache.size >= LOG_TAIL_CACHE_MAX_ENTRIES) {
+      const oldest = logTailCache.keys().next().value;
+      if (oldest !== undefined) {
+        logTailCache.delete(oldest);
+      }
+    }
+    logTailCache.set(logPath, { mtimeMs, size, result });
+    return result;
   } catch {
     return { unavailable: true, reason: "unreadable" };
   }

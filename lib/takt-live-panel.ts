@@ -261,9 +261,10 @@ export function renderTaktProjectStack(
     `input: ${formatTaktInputModeLine(inputMode)}`,
     headerLine(visibleProjects),
   ];
-  for (const project of visibleProjects) {
-    if (lines.length >= MAX_STACK_ROWS - 1 && visibleProjects.indexOf(project) < visibleProjects.length - 1) {
-      lines.push(`… ${visibleProjects.length - visibleProjects.indexOf(project)} more`);
+  for (let index = 0; index < visibleProjects.length; index += 1) {
+    const project = visibleProjects[index];
+    if (lines.length >= MAX_STACK_ROWS - 1 && index < visibleProjects.length - 1) {
+      lines.push(`… ${visibleProjects.length - index} more`);
       break;
     }
     lines.push(sessionRow(project, columns, now));
@@ -656,6 +657,8 @@ interface TerminalLine {
   getCell(column: number): TerminalCell | undefined;
 }
 
+const BLANK_TERMINAL_CELL = createBlankCell();
+
 function renderLine(line: TerminalLine | undefined, columns: number, cursorColumn: number): string {
   if (!line) {
     return `${" ".repeat(columns)}${cursorColumn >= 0 ? CURSOR_MARKER : ""}`;
@@ -668,8 +671,8 @@ function renderLine(line: TerminalLine | undefined, columns: number, cursorColum
       output += CURSOR_MARKER;
     }
 
-    const current = line.getCell(column) ?? createBlankCell();
-    const style = cellStyle(current);
+    const current = line.getCell(column) ?? BLANK_TERMINAL_CELL;
+    const style = current === BLANK_TERMINAL_CELL ? "" : cellStyle(current);
     if (style !== previousStyle) {
       output += style ? `\u001b[${style}m` : "\u001b[0m";
       previousStyle = style;
