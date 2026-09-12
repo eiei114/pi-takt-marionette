@@ -18,14 +18,18 @@ export const DEFAULT_MAX_QUEUE_CONTINUATIONS = 20;
 export function resolveMaxQueueContinuations(
   raw: string | undefined = process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX,
 ): number {
-  if (raw === undefined || raw.trim() === "") {
+  const normalized = raw?.trim();
+  if (normalized === undefined || normalized === "") {
     return DEFAULT_MAX_QUEUE_CONTINUATIONS;
   }
-  const parsed = Number.parseInt(raw.trim(), 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  // Digits only: `Number.parseInt` would read "7tasks" as 7 and "1e2" as 1, so
+  // a typo in the environment would silently change the cap instead of falling
+  // back to the documented default.
+  if (!/^\d+$/.test(normalized)) {
     return DEFAULT_MAX_QUEUE_CONTINUATIONS;
   }
-  return parsed;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : DEFAULT_MAX_QUEUE_CONTINUATIONS;
 }
 
 export interface QueueContinuationInput {

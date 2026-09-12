@@ -45,6 +45,11 @@
   `TAKT_QUEUE_AUTO_CONTINUE_MAX` caps the chain (default 20, `0` disables).
   `takt_stop` resets the continuation budget, and `takt exec` sessions never
   chain.
+  The queue session also ends when the queue drains: a later status read, exec,
+  or workflow run cannot start a `takt run` on its own, and a failed task-list
+  read preserves the spent budget instead of resetting it. A malformed
+  `TAKT_QUEUE_AUTO_CONTINUE_MAX` (for example `7tasks`) falls back to the
+  default instead of being partially parsed.
 
 ## 0.6.4 - 2026-09-05
 

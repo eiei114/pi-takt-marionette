@@ -2335,17 +2335,25 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       }
     }
     project.summary = await readTaktSummary(project.cwd, options);
-    // The periodic refresh skips the task list; a finished queue run needs the
-    // live pending count to decide whether a follow-up run is required.
+    // The periodic refresh skips the task list, and a task-list-free summary
+    // always reports `pending: 0`. A finished queue run needs the live count to
+    // decide whether a follow-up run is required, so it is read here.
+    let taskListUnavailable = false;
     if (project.queueRunActive === true && !project.runner.isRunning && options.includeTaskList !== true) {
       try {
         project.summary = await readTaktSummary(project.cwd, { ...options, includeTaskList: true });
       } catch {
-        // A locked or failing task list must not break the refresh; the run
-        // metadata summary above stays authoritative for this tick.
+        // A locked or failing task list must not break the refresh. It must not
+        // decide continuation either: the task-list-free summary above looks
+        // drained, which would reset the continuation budget and let a later
+        // refresh start more follow-up runs than the cap allows.
+        taskListUnavailable = true;
       }
     }
     this.reconcileExecCompletion(project);
+    if (taskListUnavailable) {
+      return;
+    }
     this.armQueueContinuation(project, snapshot.lastExit?.code);
   }
 
@@ -2371,9 +2379,10 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         project.queueContinuationArmed = true;
         return;
       case "no-pending-tasks":
-        // Queue drained: the next operator start begins a fresh continuation budget.
-        project.queueContinuationCount = 0;
-        project.queueContinuationArmed = false;
+        // Queue drained: the queue session is over, so a later `takt exec` or
+        // workflow completion cannot arm a `takt run`, and the next operator
+        // start begins a fresh continuation budget.
+        this.clearQueueContinuation(project);
         return;
       case "previous-run-did-not-succeed":
       case "stage-not-completed":

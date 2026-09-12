@@ -23,8 +23,12 @@ test("queue continuation cap defaults, honors 0, and rejects malformed values", 
   assert.equal(resolveMaxQueueContinuations(""), DEFAULT_MAX_QUEUE_CONTINUATIONS);
   assert.equal(resolveMaxQueueContinuations("7"), 7);
   assert.equal(resolveMaxQueueContinuations("0"), 0);
+  assert.equal(resolveMaxQueueContinuations(" 7 "), 7);
   assert.equal(resolveMaxQueueContinuations("-3"), DEFAULT_MAX_QUEUE_CONTINUATIONS);
   assert.equal(resolveMaxQueueContinuations("many"), DEFAULT_MAX_QUEUE_CONTINUATIONS);
+  assert.equal(resolveMaxQueueContinuations("7tasks"), DEFAULT_MAX_QUEUE_CONTINUATIONS);
+  assert.equal(resolveMaxQueueContinuations("1e2"), DEFAULT_MAX_QUEUE_CONTINUATIONS);
+  assert.equal(resolveMaxQueueContinuations("2.5"), DEFAULT_MAX_QUEUE_CONTINUATIONS);
 });
 
 test("a finished queue run with pending tasks continues", () => {

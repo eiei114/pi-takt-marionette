@@ -39,9 +39,13 @@ gap for queue runs:
 - the chain continues while each run succeeds, up to
   `TAKT_QUEUE_AUTO_CONTINUE_MAX` follow-up runs (default `20`). `0` disables
   automatic continuation;
-- the chain stops without starting anything when a run is stopped, aborts, or
-  exits non-zero, and reports
-  `automatic continuation stopped after N follow-up run(s)`;
+- a run that is stopped, aborts, or exits non-zero ends the chain silently: no
+  follow-up starts, and the queue is handed back to the operator. The
+  `automatic continuation stopped after N follow-up run(s)` notification is
+  only sent when the chain stops because `TAKT_QUEUE_AUTO_CONTINUE_MAX`
+  follow-up runs have already been used;
+- when the queue drains (no pending task is left), the queue session ends
+  quietly. A later `takt exec` or workflow run never chains a `takt run`;
 - `takt_stop` ends the queue session, so the next operator start begins a fresh
   continuation budget;
 - `takt exec` sessions never chain; auto-continue belongs to queue runs only.

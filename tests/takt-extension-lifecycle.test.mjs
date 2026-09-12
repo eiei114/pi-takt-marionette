@@ -616,6 +616,93 @@ test("queue continues with a follow-up run while pending tasks remain", async ()
   }
 });
 
+test("a drained queue session cannot be rearmed by a later status read", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-auto-continue-drain-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
+  process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX = "5";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    await invoke(tools, "takt_run_pending", { profile: "pi-docs" }, context);
+    // The queue still reports a pending task, so exactly one follow-up starts.
+    await waitFor(
+      () => context.notifications.some((entry) => /follow-up run 1\/5/.test(entry.message)) || undefined,
+      25_000,
+    );
+    // Drain the queue while the follow-up runs: its completion refresh must end
+    // the queue session instead of leaving `queueRunActive` set.
+    process.env.TEST_TASK_MODE = "none";
+    await waitFor(() => logLines(logPath).filter((line) => line === "run").length >= 2 || undefined, 25_000);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+
+    // A task enqueued after the drain, plus a status read, must not start a run
+    // on its own: a drained queue is not a queue session anymore.
+    process.env.TEST_TASK_MODE = "pending";
+    await invoke(tools, "takt_read_screen", { rows: 8 }, context);
+    // Two refresh ticks are enough for a wrongly armed continuation to start a
+    // third `takt run`.
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+
+    assert.equal(logLines(logPath).filter((line) => line === "run").length, 2);
+    assert.equal(
+      context.notifications.filter((entry) => /follow-up run/.test(entry.message)).length,
+      1,
+      JSON.stringify(context.notifications),
+    );
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("a failed task-list read keeps the continuation budget", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-auto-continue-list-fail-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
+  process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX = "1";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    await invoke(tools, "takt_run_pending", { profile: "pi-docs" }, context);
+    await waitFor(
+      () => context.notifications.some((entry) => /follow-up run 1\/1/.test(entry.message)) || undefined,
+      25_000,
+    );
+    // The follow-up run finishes while `takt list` is broken. A task-list-free
+    // summary reports `pending: 0`, so a continuation decision taken from it
+    // would look drained and reset the budget that was just spent.
+    process.env.TEST_LIST_MODE = "fail";
+    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    process.env.TEST_LIST_MODE = "ok";
+
+    // With the budget intact the chain must stop at the cap (1 follow-up and a
+    // one-time notice) instead of starting a second follow-up run.
+    await waitFor(
+      () => context.notifications.some((entry) => /automatic continuation stopped after 1 follow-up run/.test(entry.message)) || undefined,
+      25_000,
+    );
+    assert.equal(logLines(logPath).filter((line) => line === "run").length, 2);
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
 async function waitFor(check, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
