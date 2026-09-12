@@ -115,12 +115,17 @@ For DTM Cursor (`dtm-cursor`):
   The resume tool opens TAKT's resume UI, selects `Requeue`, preserves the run
   checkpoint, and does not call `takt clear` or submit the task body again.
 - If only stale or ownerless `running` metadata remains, inspect it first with
-  `takt_read_screen`, then use `takt_stop` with `forceObserved: true` **and the
-  exact profile name**. Without a profile the call only resolves a
-  bridge-owned running PTY; if the killed PTY is the one that left the
-  metadata, an argument-less stop answers "not running" and reconciles
-  nothing. Force-observed recovery marks stale/unknown metadata aborted but
-  never kills an external live PID.
+  `takt_read_screen`, then use `takt_stop { forceObserved: true }`. That
+  reconciles stale/unknown metadata to `aborted` and never kills an external
+  live PID. Add `profile` (the exact profile name) whenever the observed project
+  cannot be resolved automatically: with no bridge-owned PTY an argument-less
+  stop falls back to the project with observed activity, which is ambiguous or
+  empty when several projects qualify or none is visible.
+- A live run the bridge does not own cannot be stopped from here: `takt_stop`
+  owns only bridge-started PTYs and never kills an external PID, with or
+  without `forceObserved`. Tell the user to stop it in the terminal or process
+  that started it, or wait for it to finish, and do not expect `takt_stop` to
+  release the session.
 - Read the `ownership:` line from `takt_read_screen` before deciding whether a
   run exists. `ownership: observed` with `observedRunning: true` means TAKT
   metadata reports a live run that this Pi session does not own; a

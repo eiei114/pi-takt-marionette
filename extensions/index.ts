@@ -2334,7 +2334,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     try {
       await project.runner.attach();
       this.restoreProjectControlState(project);
-      if (project.runner.isRunning) {
+      // `setProjectStage` mirrors the stage back into the broker, so overwriting
+      // a restored control stage would destroy the gate it encodes: a session
+      // restored as `awaiting_go` would look like a plain run and refuse
+      // `takt_submit_go`. Only a stage with no live meaning (`idle`, or a
+      // terminal stage from the previous PTY) needs to become `running`.
+      if (project.runner.isRunning && (project.stage === "idle" || isTerminalProjectStage(project.stage))) {
         this.setProjectStage(project, "running");
       }
     } catch (error) {

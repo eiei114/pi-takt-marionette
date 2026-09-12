@@ -158,6 +158,14 @@ export function classifySessionStatus(
   return isProcessAlive(pid) ? "live" : "stale";
 }
 
+/**
+ * Liveness probe for a recorded owner pid.
+ *
+ * `ESRCH` is the only answer that proves the process is gone. `EPERM` means the
+ * pid exists but belongs to another user, and any other probe failure is
+ * unknown; both must stay "alive" so an unreadable or foreign owner is never
+ * reclaimed by another task on the same branch.
+ */
 export function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -165,9 +173,14 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return !isMissingProcessError(error);
   }
+}
+
+function isMissingProcessError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return code === "ESRCH";
 }
 
 /** Workflow bundle facts the bridge can read without invoking TAKT. */

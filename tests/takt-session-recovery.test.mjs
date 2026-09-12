@@ -101,6 +101,53 @@ test("quiet orphaned metadata does not pin the project to unknown", () => {
   assert.equal(snapshot.status, "completed");
 });
 
+test("a completed run does not refresh orphaned running metadata", () => {
+  const summaryWithRecentCompletion = summary({
+    status: "unknown",
+    running: 1,
+    activityAt: STALE_ACTIVITY,
+    runs: [
+      { slug: "done", task: "t", workflow: "w", status: "completed", sessionStatus: "completed", updatedAt: FRESH },
+      runningRun(),
+    ],
+  });
+  assert.equal(isUnaccountedRunningMetadata(summaryWithRecentCompletion, NOW), false);
+
+  const summaryWithRecentActiveRun = summary({
+    status: "unknown",
+    running: 1,
+    activityAt: STALE_ACTIVITY,
+    runs: [runningRun({ updatedAt: FRESH })],
+  });
+  assert.equal(isUnaccountedRunningMetadata(summaryWithRecentActiveRun, NOW), true);
+});
+
+test("terminal bridge stage does not mask an observed live run", () => {
+  const snapshot = resolveProjectSessionSnapshot({
+    stage: "completed",
+    stageIsTerminal: true,
+    runnerRunning: false,
+    runnerStatus: "completed",
+    runnerPid: 46204,
+    runnerLastExit: { code: 0, signal: 0 },
+    observed: summary({
+      status: "live",
+      running: 1,
+      stage: "external-stage",
+      pid: 4242,
+      activityAt: FRESH,
+      runs: [runningRun({ sessionStatus: "live", pid: 4242 })],
+    }),
+    now: NOW,
+  });
+
+  assert.equal(snapshot.status, "live");
+  assert.equal(snapshot.ownership, "observed");
+  assert.equal(snapshot.stage, "external-stage");
+  assert.equal(snapshot.pid, 4242);
+  assert.equal(snapshot.observedRun?.slug, "killed-run");
+});
+
 test("observed live run keeps its own stage and reports observed ownership", () => {
   const snapshot = resolveProjectSessionSnapshot({
     stage: "idle",
@@ -179,7 +226,8 @@ test("block messages separate a live external run from orphaned metadata", () =>
   });
   assert.match(live, /already running in takt/);
   assert.match(live, /pid 4242/);
-  assert.match(live, /takt_stop \{ profile: "takt" \}/);
+  assert.match(live, /stop it in the terminal or process that started it/);
+  assert.doesNotMatch(live, /takt_stop/);
   assert.doesNotMatch(live, /forceObserved/);
 
   const orphaned = describeExternalSessionBlock({

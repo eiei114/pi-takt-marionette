@@ -302,6 +302,11 @@ function assertNoActiveBranchConflict(tasks: Record<string, unknown>[], branch: 
  *
  * Records without a usable numeric owner pid stay active on purpose: a missing
  * pid is not evidence that the owner is dead.
+ *
+ * Pid reuse is the known limit of this check: if the recorded owner exited and
+ * its pid was recycled, the record keeps looking active until TAKT reconciles
+ * it. Failing that way is deliberate - clearing a record whose owner is alive
+ * would let a second task start on the same branch while the first one runs.
  */
 export function isStaleRunningTaskRecord(task: Record<string, unknown>): boolean {
   if (task.status !== "running") {

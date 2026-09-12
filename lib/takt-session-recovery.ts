@@ -46,13 +46,18 @@ export interface ProjectSessionSnapshotInput {
  * The run that observed TAKT metadata reports as active, whether or not the
  * bridge ever owned its PTY.
  */
-export function findObservedActiveRun(summary: TaktSummary | undefined): TaktRunSnapshot | undefined {
-  return summary?.runs.find((run) =>
+/** A run record that may still own live work: running/stale status or session. */
+function isActiveRunRecord(run: TaktRunSnapshot): boolean {
+  return (
     run.status === "running"
       || run.status === "stale"
       || run.sessionStatus === "live"
-      || run.sessionStatus === "stale",
+      || run.sessionStatus === "stale"
   );
+}
+
+export function findObservedActiveRun(summary: TaktSummary | undefined): TaktRunSnapshot | undefined {
+  return summary?.runs.find(isActiveRunRecord);
 }
 
 function toObservedRunRef(run: TaktRunSnapshot | undefined): ObservedRunRef | undefined {
@@ -100,7 +105,12 @@ export function isUnaccountedRunningMetadata(
 function latestObservedActivityAt(summary: TaktSummary): string | undefined {
   const stamps = [
     ...(summary.activityAt ? [summary.activityAt] : []),
-    ...summary.runs.flatMap((run) => [run.updatedAt, run.startTime].filter((value): value is string => Boolean(value))),
+    // Only active runs date the unresolved work. A recently completed run says
+    // nothing about an orphaned `running` record, and using its stamp would
+    // keep that record fresh (and blocking) far past the inactivity TTL.
+    ...summary.runs
+      .filter(isActiveRunRecord)
+      .flatMap((run) => [run.updatedAt, run.startTime].filter((value): value is string => Boolean(value))),
   ];
   let latest: { raw: string; at: number } | undefined;
   for (const raw of stamps) {
@@ -139,8 +149,10 @@ export function resolveProjectSessionSnapshot(input: ProjectSessionSnapshotInput
     // A terminal bridge stage normally means "this bridge session is done", but
     // fresh `running` metadata with no recorded owner pid must still surface:
     // that is a killed or external run, not a finished one.
-    if (unaccounted) {
-      return observedSnapshot(observed as TaktSummary);
+    // An observed live run wins for the same reason: the bridge finishing its
+    // own PTY does not mean the run TAKT is reporting has stopped.
+    if (observed && (observed.status === "live" || unaccounted)) {
+      return observedSnapshot(observed);
     }
     return {
       status: "completed",
@@ -224,12 +236,17 @@ export function resolveStopProjectId(input: StopProjectResolutionInput): string 
   return input.forceObserved ? input.observedId : undefined;
 }
 
-function formatProfileArgument(profileName: string | undefined, forceObserved: boolean): string {
+/**
+ * Recovery arguments for the orphaned-metadata case. `forceObserved` is the
+ * point of the instruction, so it is always present; the profile is added when
+ * the caller knows it.
+ */
+function formatReconcileArgument(profileName: string | undefined): string {
   const entries = [
     ...(profileName ? [`profile: "${profileName}"`] : []),
-    ...(forceObserved ? ["forceObserved: true"] : []),
+    "forceObserved: true",
   ];
-  return entries.length > 0 ? `{ ${entries.join(", ")} }` : "{ forceObserved: true }";
+  return `{ ${entries.join(", ")} }`;
 }
 
 function describeActiveRun(summary: TaktSummary | undefined): string {
@@ -260,7 +277,9 @@ export function describeExternalSessionBlock(input: ExternalSessionBlockInput): 
   }
   const detail = describeActiveRun(summary);
   if (status === "live") {
-    return `TAKT is already running in ${input.label}${detail}; stop it with takt_stop ${formatProfileArgument(input.profileName, false)} before starting another run.`;
+    // The bridge only stops PTYs it owns; a live external pid must be stopped
+    // where it was started, so `takt_stop` is the wrong instruction here.
+    return `TAKT is already running in ${input.label}${detail}; the bridge does not own that process, so stop it in the terminal or process that started it before starting another run.`;
   }
-  return `TAKT has unreconciled ${status} running metadata in ${input.label}${detail} and no live owner process is recorded; nothing is running. Reconcile it with takt_stop ${formatProfileArgument(input.profileName, true)}, then retry.`;
+  return `TAKT has unreconciled ${status} running metadata in ${input.label}${detail} and no live owner process is recorded; nothing is running. Reconcile it with takt_stop ${formatReconcileArgument(input.profileName)}, then retry.`;
 }

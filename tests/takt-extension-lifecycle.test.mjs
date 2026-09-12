@@ -1019,6 +1019,48 @@ test("refresh re-attaches to a broker this Pi session does not hold", async () =
   }
 });
 
+test("refresh re-attach preserves a restored control stage", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-reattach-stage-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  process.env.TEST_RUN_MODE = "long";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+  let controller;
+
+  try {
+    await events.get("session_start")?.({ reason: "startup" }, context);
+    // A manual-GO session that outlived a replaced runtime keeps its gate in the
+    // broker control state. Re-attaching must not downgrade it to `running`,
+    // because submitGo() only accepts `awaiting_go`.
+    controller = new TaktRunController({ cwd: project, command, cols: 60, rows: 8 });
+    await controller.start(["run"]);
+    controller.setControlState({ stage: "awaiting_go" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await invoke(tools, "takt_read_screen", { rows: 8 }, context);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const screen = await invoke(tools, "takt_read_screen", { rows: 8 }, context);
+    assert.equal(screen.details.stage, "awaiting_go");
+    assert.equal(screen.details.ownership, "bridge");
+    assert.equal(screen.details.running, true);
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    if (controller) {
+      try {
+        await controller.dispose();
+      } catch {
+        // The extension may already own and stop the adopted broker.
+      }
+    }
+    restoreEnvironment();
+  }
+});
+
 test("extension rejects exec when task metadata reports an external live session", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-external-"));
   const project = join(root, "project");
@@ -1053,7 +1095,7 @@ test("extension rejects exec when task metadata reports an external live session
         clear: false,
         preset: "blocked",
       }, context),
-      /TAKT is already running in project \(run external-live-run, running\/live, pid \d+\); stop it with takt_stop \{ profile: "pi-docs" \}/,
+      /TAKT is already running in project \(run external-live-run, running\/live, pid \d+\); the bridge does not own that process, so stop it in the terminal or process that started it/,
     );
     assert.equal(logLines(logPath).some((line) => line.startsWith("exec:")), false);
   } finally {

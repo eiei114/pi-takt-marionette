@@ -70,13 +70,19 @@ Pi command / project path
   externally owned PID.
 - Session state carries an explicit owner: `bridge` when the reported PTY is
   owned by this Pi session, `observed` when the state comes from `.takt`
-  metadata only, and `none` when nothing is running. Fresh `running` metadata
-  with no recorded live pid keeps that `observed` ownership even after the
-  bridge PTY has finished, because a killed or external `takt run` must stay
-  visible instead of being reported as `completed`. Quiet orphaned metadata
-  ages out after the observed-inactivity window so it cannot pin a project to
-  `unknown` forever. `takt_read_screen` exposes `ownership`, `observedRun`, and
-  `observedRunning` alongside `status` and `running`.
+  metadata only, and `none` only when neither a bridge session nor observed
+  metadata determines the state. `bridge` therefore outlives the process: a
+  completed or stale PTY is still a bridge-owned session, and a finished bridge
+  PTY is not proof that no run exists. Fresh `running` metadata with no recorded
+  live pid keeps `observed` ownership even after the bridge PTY has finished,
+  and a live observed run keeps it even while the bridge stage is terminal,
+  because a killed or external `takt run` must stay visible instead of being
+  reported as `completed`. Quiet orphaned metadata ages out after the
+  observed-inactivity window so it cannot pin a project to `unknown` forever.
+  `takt_read_screen` exposes `ownership`, `observedRun`, and `observedRunning`
+  alongside `status` and `running`; consumers must read ownership together with
+  `observedRunning` (and the recorded pid) rather than inferring "nothing is
+  running" from a non-running PTY.
 - Queue reconciliation treats a `running` record whose recorded owner pid is
   gone as inactive, so a killed run does not block later enqueues for the same
   branch. Records without a usable pid stay active, and `takt_stop` resolves the

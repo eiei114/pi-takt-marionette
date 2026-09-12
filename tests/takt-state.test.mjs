@@ -46,6 +46,28 @@ test("classifyRunStatus marks a running record stale only with a dead owner pid"
   assert.equal(classifyRunStatus({ status: "running" }, 0), "stale");
 });
 
+test("isProcessAlive only reports a dead owner for ESRCH", async () => {
+  const { isProcessAlive } = await import("../lib/takt-state.ts");
+  const kill = process.kill;
+  const throwWithCode = (code) => {
+    const error = new Error(`kill ${code}`);
+    error.code = code;
+    throw error;
+  };
+  try {
+    process.kill = () => throwWithCode("EPERM");
+    assert.equal(isProcessAlive(4242), true);
+    process.kill = () => throwWithCode("EACCES");
+    assert.equal(isProcessAlive(4242), true);
+    process.kill = () => throwWithCode("ESRCH");
+    assert.equal(isProcessAlive(4242), false);
+  } finally {
+    process.kill = kill;
+  }
+  assert.equal(isProcessAlive(0), false);
+  assert.equal(isProcessAlive(-1), false);
+});
+
 test("classifySessionStatus distinguishes live, stale, completed, and unknown", () => {
   assert.equal(classifySessionStatus({ status: "running", pid: process.pid }), "live");
   assert.equal(classifySessionStatus({ status: "running", pid: 0 }), "stale");
