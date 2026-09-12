@@ -112,6 +112,11 @@ function createTaktCommand(directory) {
     "    event(\"run:long\");",
     "    process.stdout.write(\"attach-target-output\\r\\n\");",
     "    setInterval(() => {}, 1000);",
+    "  } else if (process.env.TEST_RUN_MODE === \"slow\") {",
+    "    event(\"run:slow\");",
+    "    process.stdout.write(\"Running pending tasks…\\r\\n\");",
+    "    process.on(\"SIGINT\", () => { event(\"signal:run\"); process.exit(130); });",
+    "    setTimeout(() => process.exit(0), Number(process.env.TEST_RUN_EXIT_DELAY_MS || 1500));",
     "  } else {",
     "    event(\"run\");",
     "    process.stdout.write(\"Running pending tasks…\\r\\n\");",
@@ -185,6 +190,7 @@ function configureEnvironment(root, command, logPath, taskMode, listMode = "ok")
     ["TEST_WORKFLOW_EXIT_CODE", process.env.TEST_WORKFLOW_EXIT_CODE],
     ["TEST_RESUME_MODE", process.env.TEST_RESUME_MODE],
     ["TEST_RUN_MODE", process.env.TEST_RUN_MODE],
+    ["TEST_RUN_EXIT_DELAY_MS", process.env.TEST_RUN_EXIT_DELAY_MS],
     ["TAKT_QUEUE_AUTO_CONTINUE_MAX", process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX],
   ]);
   process.env.APPDATA = root;
@@ -697,6 +703,99 @@ test("a failed task-list read keeps the continuation budget", async () => {
       25_000,
     );
     assert.equal(logLines(logPath).filter((line) => line === "run").length, 2);
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("reload keeps draining the queue run the broker still holds", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-auto-continue-reload-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
+  process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX = "1";
+  process.env.TEST_RUN_MODE = "slow";
+  process.env.TEST_RUN_EXIT_DELAY_MS = "2500";
+  const first = loadExtension();
+  const firstContext = createContext(project);
+
+  try {
+    await first.events.get("session_start")?.({ reason: "startup" }, firstContext);
+    await invoke(first.tools, "takt_run_pending", { profile: "pi-docs" }, firstContext);
+    await waitFor(() => logLines(logPath).includes("run:slow") || undefined, 15_000);
+
+    // Reload while the queue run is still alive. The broker keeps the PTY, so
+    // the queue session has to survive with it: the next runtime must still
+    // chain the follow-up run once this one exits.
+    await first.events.get("session_shutdown")?.({ reason: "reload" }, firstContext);
+    const second = loadExtension();
+    const secondContext = createContext(project);
+    try {
+      await second.events.get("session_start")?.({ reason: "reload" }, secondContext);
+      await waitFor(
+        () => secondContext.notifications.some((entry) => /follow-up run 1\/1/.test(entry.message)) || undefined,
+        25_000,
+      );
+      // The follow-up is announced just before it starts; wait for its own run.
+      await waitFor(
+        () => logLines(logPath).filter((line) => line === "run:slow").length >= 2 || undefined,
+        15_000,
+      );
+      // Drain the queue and let the follow-up finish before shutting down, so
+      // the test does not stop the runtime while a chained run is starting.
+      process.env.TEST_TASK_MODE = "none";
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    } finally {
+      await second.events.get("session_shutdown")?.({ reason: "quit" }, secondContext);
+    }
+  } finally {
+    restoreEnvironment();
+  }
+});
+
+test("starting an exec ends the queue session", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-auto-continue-exec-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
+  process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX = "5";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    await invoke(tools, "takt_run_pending", { profile: "pi-docs" }, context);
+    await waitFor(
+      () => context.notifications.some((entry) => /follow-up run 1\/5/.test(entry.message)) || undefined,
+      25_000,
+    );
+    // The operator takes over with an exec session while the follow-up runs.
+    // That ends the queue session: nothing may chain a `takt run` afterwards,
+    // even though the task list still reports pending work.
+    await invoke(tools, "takt_exec_prompt", {
+      profile: "pi-docs",
+      prompt: "operator takeover",
+      clear: false,
+      preset: "takeover",
+    }, context);
+    await waitFor(() => logLines(logPath).includes("input:takeover:go") || undefined, 15_000);
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+
+    assert.equal(
+      context.notifications.filter((entry) => /follow-up run/.test(entry.message)).length,
+      1,
+      JSON.stringify(context.notifications),
+    );
   } finally {
     await events.get("session_shutdown")?.({ reason: "quit" }, context);
     restoreEnvironment();

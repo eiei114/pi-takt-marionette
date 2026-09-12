@@ -49,7 +49,10 @@
   or workflow run cannot start a `takt run` on its own, and a failed task-list
   read preserves the spent budget instead of resetting it. A malformed
   `TAKT_QUEUE_AUTO_CONTINUE_MAX` (for example `7tasks`) falls back to the
-  default instead of being partially parsed.
+  default instead of being partially parsed. The queue session and its spent
+  budget travel in the broker control state, so a Pi reload keeps draining the
+  run the broker is still holding, and starting a `takt exec`, workflow, or
+  resume ends the queue session instead of leaving it armed.
 
 ## 0.6.4 - 2026-09-05
 

@@ -33,8 +33,9 @@ is active is therefore invisible to that run and would wait in
 `.takt/tasks.yaml` until someone starts `takt run` again. The bridge closes that
 gap for queue runs:
 
-- when a bridge-owned `takt run` exits **successfully** and pending tasks remain,
-  the bridge starts the next `takt run` automatically and notifies
+- when a bridge-owned `takt run` exits **successfully** (exit code `0`) and the
+  bridge stage for it is `completed`, with pending tasks still queued, the
+  bridge starts the next `takt run` automatically and notifies
   `follow-up run N/max`;
 - the chain continues while each run succeeds, up to
   `TAKT_QUEUE_AUTO_CONTINUE_MAX` follow-up runs (default `20`). `0` disables
@@ -42,8 +43,12 @@ gap for queue runs:
 - a run that is stopped, aborts, or exits non-zero ends the chain silently: no
   follow-up starts, and the queue is handed back to the operator. The
   `automatic continuation stopped after N follow-up run(s)` notification is
-  only sent when the chain stops because `TAKT_QUEUE_AUTO_CONTINUE_MAX`
-  follow-up runs have already been used;
+  sent instead when the cap stops the chain - either because
+  `TAKT_QUEUE_AUTO_CONTINUE_MAX` follow-up runs were already used, or because
+  the cap is `0` and pending tasks are left;
+- starting a `takt exec`, workflow, or resume ends the queue session: those
+  launches never chain a `takt run`, and a reload of Pi keeps the queue session
+  (and its spent budget) attached to the broker that is still running it;
 - when the queue drains (no pending task is left), the queue session ends
   quietly. A later `takt exec` or workflow run never chains a `takt run`;
 - `takt_stop` ends the queue session, so the next operator start begins a fresh

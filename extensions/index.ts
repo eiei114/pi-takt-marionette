@@ -862,6 +862,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       if (project.runner.hasSession) {
         await stopWaitDispose(project.runner, undefined, TAKT_LIFECYCLE_TIMEOUT_MS);
       }
+      this.clearQueueContinuation(project);
       await project.runner.start(preset.trim() ? ["exec", preset.trim()] : ["exec"]);
       await this.showLive();
       context.ui.notify(`TAKT exec started for ${project.label}. Use /takt:send to paste input.`, "info");
@@ -1229,6 +1230,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
       this.beginExecTracking(project);
       this.setProjectStage(project, "starting", onUpdate, `Starting takt exec ${preset} in ${project.label}…`);
+      this.clearQueueContinuation(project);
       await project.runner.start(["exec", preset]);
       await this.showLive(false);
 
@@ -1480,6 +1482,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         onUpdate,
         `Starting workflow ${normalizedWorkflow} in ${project.label}…`,
       );
+      this.clearQueueContinuation(project);
       await project.runner.start(args, env);
       await this.showLive(false);
       this.setProjectStage(project, "running", onUpdate, `TAKT running ${normalizedWorkflow} in ${project.label}.`);
@@ -1594,6 +1597,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
     try {
       this.setProjectStage(project, "starting", onUpdate, `Opening TAKT resume in ${project.label}…`);
+      this.clearQueueContinuation(project);
       await project.runner.start(resumeArgs);
       await this.showLive(false);
       await waitForTaktResumeMenu(project.runner, signal, TAKT_RESUME_MENU_TIMEOUT_MS);
@@ -2141,6 +2145,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       stage: project.stage,
       ...(project.promptPreview ? { promptPreview: project.promptPreview } : {}),
       queuedInputs: [...(project.queuedInputs?.snapshot() ?? [])],
+      // The queue session is mirrored so a reload cannot lose the continuation
+      // budget while the broker keeps the run alive.
+      ...(project.queueRunActive === true ? { queueRunActive: true } : {}),
+      ...(project.queueContinuationCount !== undefined
+        ? { queueContinuationCount: project.queueContinuationCount }
+        : {}),
     });
   }
 
@@ -2149,6 +2159,13 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (isTaktExecStage(restored.stage)) project.stage = restored.stage;
     project.promptPreview = restored.promptPreview;
     if (restored.queuedInputs) project.queuedInputs?.restore(restored.queuedInputs);
+    // `queueContinuationInFlight`/`queueContinuationArmed` are deliberately not
+    // restored: a start that was interrupted by the reload must be re-decided by
+    // the next refresh, not replayed.
+    if (restored.queueRunActive === true) project.queueRunActive = true;
+    if (typeof restored.queueContinuationCount === "number") {
+      project.queueContinuationCount = restored.queueContinuationCount;
+    }
   }
 
   /**
@@ -2415,6 +2432,9 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     project.queueContinuationArmed = false;
     project.queueContinuationInFlight = false;
     project.queueContinuationCount = 0;
+    // Mirror the ended session so a reload does not restore the budget the
+    // operator already spent.
+    this.syncProjectControlState(project);
   }
 
   /** Start the next queued run for every project whose previous run drained part of the queue. */
