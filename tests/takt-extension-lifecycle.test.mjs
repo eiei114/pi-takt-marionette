@@ -1000,7 +1000,7 @@ test("extension rejects exec when task metadata reports an external live session
         clear: false,
         preset: "blocked",
       }, context),
-      /external live session/,
+      /TAKT is already running in project \(run external-live-run, running\/live, pid \d+\); stop it with takt_stop \{ profile: "pi-docs" \}/,
     );
     assert.equal(logLines(logPath).some((line) => line.startsWith("exec:")), false);
   } finally {

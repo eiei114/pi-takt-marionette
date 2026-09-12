@@ -115,8 +115,26 @@ For DTM Cursor (`dtm-cursor`):
   The resume tool opens TAKT's resume UI, selects `Requeue`, preserves the run
   checkpoint, and does not call `takt clear` or submit the task body again.
 - If only stale or ownerless `running` metadata remains, inspect it first with
-  `takt_read_screen`, then use `takt_stop` with `forceObserved: true`. This may
-  mark stale/unknown metadata aborted but never kills an external live PID.
+  `takt_read_screen`, then use `takt_stop` with `forceObserved: true` **and the
+  exact profile name**. Without a profile the call only resolves a
+  bridge-owned running PTY; if the killed PTY is the one that left the
+  metadata, an argument-less stop answers "not running" and reconciles
+  nothing. Force-observed recovery marks stale/unknown metadata aborted but
+  never kills an external live PID.
+- Read the `ownership:` line from `takt_read_screen` before deciding whether a
+  run exists. `ownership: observed` with `observedRunning: true` means TAKT
+  metadata reports a live run that this Pi session does not own; a
+  `completed`/`stale` PTY state does not contradict it and must not be reported
+  as "nothing is running".
+- A TAKT task works in an isolated clone under `takt-worktrees/`, not a linked
+  `git worktree`. Commits made there reach the main checkout's branch only when
+  TAKT pushes the branch back after a successful task; after a killed run, any
+  checkpoint commit must be fetched back explicitly before the next task can
+  build on it.
+- After stopping a run, `takt run` reconciles interrupted task records at
+  startup (`Task was interrupted before this TAKT run started`). If an enqueue
+  is refused with `active task target already exists`, run
+  `takt_run_pending` once to let TAKT reconcile, then enqueue again.
 - If `takt_run_pending` reports an already-running session, call
   `takt_read_screen` first, then use `takt_stop` only when the user explicitly
   wants to interrupt it. Do not start a second queue/run PTY.

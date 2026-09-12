@@ -19,6 +19,7 @@ import {
   type TaktTaskExecutionPolicy,
   type TaktTaskFileOptions,
 } from "./takt-task-policy.ts";
+import { isProcessAlive } from "./takt-state.ts";
 
 const LOCK_RETRY_DELAY_MS = 25;
 const LOCK_TIMEOUT_MS = 5_000;
@@ -284,12 +285,33 @@ function assertNoActiveBranchConflict(tasks: Record<string, unknown>[], branch: 
     return;
   }
   const conflict = tasks.find((task) =>
-    task.branch === branch && (task.status === "pending" || task.status === "running"));
+    task.branch === branch
+      && (task.status === "pending" || (task.status === "running" && !isStaleRunningTaskRecord(task))));
   if (conflict) {
     throw new Error(
       `Active task target already exists: branch=${branch} (${String(conflict.name ?? "unknown")}, ${String(conflict.status)})`,
     );
   }
+}
+
+/**
+ * A `running` record whose recorded owner process is gone no longer owns the
+ * branch. TAKT reconciles such records lazily (at the next `takt run`), so the
+ * queue must not treat them as active work; otherwise a killed run blocks every
+ * later enqueue for the same branch until the operator reconciles by hand.
+ *
+ * Records without a usable numeric owner pid stay active on purpose: a missing
+ * pid is not evidence that the owner is dead.
+ */
+export function isStaleRunningTaskRecord(task: Record<string, unknown>): boolean {
+  if (task.status !== "running") {
+    return false;
+  }
+  const ownerPid = task.owner_pid;
+  if (typeof ownerPid !== "number" || !Number.isInteger(ownerPid) || ownerPid <= 0) {
+    return false;
+  }
+  return !isProcessAlive(ownerPid);
 }
 
 function uniqueName(slug: string, tasks: Record<string, unknown>[]): string {

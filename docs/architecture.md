@@ -68,6 +68,20 @@ Pi command / project path
   record to `aborted` while retaining unknown fields and checkpoint payloads.
   Explicit forced recovery applies only to stale/unknown records, never a live
   externally owned PID.
+- Session state carries an explicit owner: `bridge` when the reported PTY is
+  owned by this Pi session, `observed` when the state comes from `.takt`
+  metadata only, and `none` when nothing is running. Fresh `running` metadata
+  with no recorded live pid keeps that `observed` ownership even after the
+  bridge PTY has finished, because a killed or external `takt run` must stay
+  visible instead of being reported as `completed`. Quiet orphaned metadata
+  ages out after the observed-inactivity window so it cannot pin a project to
+  `unknown` forever. `takt_read_screen` exposes `ownership`, `observedRun`, and
+  `observedRunning` alongside `status` and `running`.
+- Queue reconciliation treats a `running` record whose recorded owner pid is
+  gone as inactive, so a killed run does not block later enqueues for the same
+  branch. Records without a usable pid stay active, and `takt_stop` resolves the
+  project from an explicit profile, a bridge-owned runner, or (with
+  `forceObserved`) the project that owns the stale metadata.
 - Each bridge-owned project has one detached PTY broker and one extension-side
   xterm screen. On `/reload`, the old extension disconnects without stopping
   TAKT; the new extension reconnects through the persisted broker descriptor

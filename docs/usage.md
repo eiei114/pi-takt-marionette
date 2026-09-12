@@ -160,6 +160,38 @@ PID, stage, and last exit so agents can tell `live` / `stale` / `completed` /
 paste stages the widget shows a truncated prompt preview instead of the full
 body.
 
+### Recovering after a killed or crashed run
+
+A killed `takt run` leaves TAKT metadata behind: `.takt/tasks.yaml` keeps the
+task `running` with a dead pid, and the task's clone keeps `status: running` in
+`.takt/runs/<slug>/meta.json`. The bridge reports that honestly instead of
+claiming the session completed:
+
+- the live widget keeps a bridge-owned row only for PTYs this Pi session
+  started. An active run that the bridge does not own renders with `🔭` and
+  `observed (not bridge-owned)`;
+- `takt_read_screen` adds `ownership:` (`bridge`, `observed`, `none`),
+  `observedRun:`, and `observedRunning:` so a finished PTY no longer hides an
+  active observed run;
+- `takt_start` / `takt_run_pending` refuse a *recent* unaccounted `running`
+  record and name the recovery command instead of only saying "external
+  session".
+
+Recover in this order:
+
+1. `takt_stop { profile: "<name>", forceObserved: true }` — reconciles
+   stale/unknown `running` metadata to `aborted` without touching a live
+   external pid. Without `forceObserved` the call only stops a bridge-owned PTY.
+2. `takt_run_pending { profile: "<name>" }` — TAKT reconciles interrupted task
+   records itself at startup (`Task was interrupted before this TAKT run
+   started`), which releases the branch for the next enqueue.
+3. `takt_enqueue_task` — a `running` record whose owner pid is gone no longer
+   blocks the branch.
+
+Queued work that TAKT never started can also be released by running `takt run`
+with no pending tasks: the startup reconciliation marks the leftover record
+failed.
+
 `running` describes workflow activity. `ptyRunning` separately reports whether
 the bridge still owns a live interactive TAKT terminal. A completed workflow
 can therefore report `status: completed`, `running: false`, and

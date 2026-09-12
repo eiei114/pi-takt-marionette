@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Recover from a killed or crashed `takt run` without manual metadata surgery.
+  `takt_enqueue_task` no longer treats a `running` record whose recorded owner
+  pid is gone as active, so a dead run stops blocking later enqueues for the
+  same branch. Records without a usable pid stay active.
+- `takt_stop` resolves its project from an explicit profile, the bridge-owned
+  running project, or (with `forceObserved`) the project that owns stale
+  metadata, so forced reconciliation is reachable when nothing is bridge-owned.
+  Without `forceObserved` it still never touches an external live pid.
+- "Do not start a duplicate" refusals now separate a live external run (names
+  the pid and `takt_stop { profile }`) from orphaned metadata (names
+  `forceObserved: true`), and stale-but-recent unaccounted `running` metadata is
+  the only unknown state that blocks. Quiet orphaned metadata ages out instead
+  of pinning a project to `unknown` forever.
+- Session snapshots carry explicit ownership: a finished bridge PTY no longer
+  masks a fresh observed `running` run as `completed`. `takt_read_screen`
+  reports `ownership`, `observedRun`, and `observedRunning`, and the live widget
+  marks an active run the bridge does not own with `🔭 observed (not
+  bridge-owned)`.
+- Document the recovery order (force-observed stop, startup reconciliation,
+  re-enqueue) in `docs/usage.md` and the ownership model in
+  `docs/architecture.md`.
+
 ## 0.6.4 - 2026-09-05
 
 - Silence the headless xterm screen's parser logs so stray PTY control bytes

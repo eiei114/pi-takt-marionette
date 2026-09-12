@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +18,15 @@ const noPrPolicy = { worktree: true, prMode: "none" };
 function temporaryProject() {
   const cwd = mkdtempSync(join(tmpdir(), "pi-takt-direct-queue-"));
   return { cwd, cleanup: () => rmSync(cwd, { recursive: true, force: true }) };
+}
+
+/** PID that has certainly exited, with no reuse window inside one test run. */
+async function createExitedProcessId() {
+  const child = spawn(process.execPath, ["-e", "0"], { stdio: "ignore" });
+  const pid = child.pid;
+  await once(child, "exit");
+  assert.equal(typeof pid, "number");
+  return pid;
 }
 
 test("direct queue writes tasks.yaml and order.md without a protocol subprocess", async () => {
@@ -104,6 +115,77 @@ test("direct queue rejects a duplicate active branch", async () => {
     await queue.enqueue("workflow: simple\nbranch: takt/shared\n\n# First task", noPrPolicy);
     await assert.rejects(
       () => queue.enqueue("workflow: review\nbranch: takt/shared\n\n# Second task", noPrPolicy),
+      /active task target already exists.*branch=takt\/shared/i,
+    );
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("direct queue releases a branch held by a running record whose owner is gone", async () => {
+  const project = temporaryProject();
+  let deadPid;
+  try {
+    // A killed `takt run` leaves `status: running` plus its own (now dead) pid.
+    // TAKT reconciles that record only on the next run, so the queue must not
+    // treat it as active work or every later enqueue for the branch fails.
+    deadPid = await createExitedProcessId();
+    mkdirSync(join(project.cwd, ".takt"), { recursive: true });
+    writeFileSync(join(project.cwd, ".takt", "tasks.yaml"), [
+      "tasks:",
+      "  - worktree: true",
+      "    auto_pr: false",
+      "    draft_pr: false",
+      "    name: killed-run",
+      "    status: running",
+      "    slug: killed-run",
+      "    summary: killed run",
+      "    task_dir: .takt/tasks/killed-run",
+      "    owner_pid: " + deadPid,
+      "    workflow: takt-default",
+      "    branch: takt/shared",
+      "",
+    ].join("\n"), "utf8");
+
+    const result = await new TaktTaskQueue({ cwd: project.cwd }).enqueue(
+      "workflow: takt-default\nbranch: takt/shared\n\n# Next task",
+      noPrPolicy,
+    );
+    assert.equal(result.status, "pending");
+    assert.equal(result.branch, "takt/shared");
+
+    const saved = parseYaml(readFileSync(result.tasksFile, "utf8")).tasks.at(-1);
+    assert.equal(saved.status, "pending");
+  } finally {
+    project.cleanup();
+  }
+});
+
+test("direct queue still blocks a running record whose owner is alive", async () => {
+  const project = temporaryProject();
+  try {
+    mkdirSync(join(project.cwd, ".takt"), { recursive: true });
+    writeFileSync(join(project.cwd, ".takt", "tasks.yaml"), [
+      "tasks:",
+      "  - worktree: true",
+      "    auto_pr: false",
+      "    draft_pr: false",
+      "    name: live-run",
+      "    status: running",
+      "    slug: live-run",
+      "    summary: live run",
+      "    task_dir: .takt/tasks/live-run",
+      "    owner_pid: " + process.pid,
+      "    workflow: takt-default",
+      "    branch: takt/shared",
+      "",
+    ].join("\n"), "utf8");
+
+    await assert.rejects(
+      () => new TaktTaskQueue({ cwd: project.cwd }).enqueue(
+        "workflow: takt-default\nbranch: takt/shared\n\n# Next task",
+        noPrPolicy,
+      ),
       /active task target already exists.*branch=takt\/shared/i,
     );
   } finally {
