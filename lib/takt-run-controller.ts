@@ -59,6 +59,14 @@ export interface TaktRunControlState {
   stage?: string;
   promptPreview?: string;
   queuedInputs?: Array<{ text: string; queuedAt: string }>;
+  /**
+   * Queue-session continuation state, persisted with the broker so a run that
+   * outlives an extension reload keeps draining the queue the operator started.
+   * The budget lives with the broker because it belongs to the queue session,
+   * not to one runtime instance.
+   */
+  queueRunActive?: boolean;
+  queueContinuationCount?: number;
 }
 
 interface BrokerDescriptor {

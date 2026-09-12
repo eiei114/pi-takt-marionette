@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 - 2026-09-12
 
 - Re-attach to a live TAKT broker during the periodic refresh instead of only
   at extension startup. A run started through a replaced runtime, or one that
@@ -36,6 +36,23 @@
 - Document the recovery order (force-observed stop, startup reconciliation,
   re-enqueue) in `docs/usage.md` and the ownership model in
   `docs/architecture.md`.
+- Drain the TAKT task queue without a manual restart. `takt run` claims pending
+  tasks only at startup, so tasks enqueued while a run was active waited for the
+  next `takt_run_pending`. After a bridge-owned queue run exits successfully and
+  pending tasks remain, the bridge now starts the next `takt run` automatically
+  and reports `follow-up run N/max` per start. The chain stops on a stopped,
+  aborted, or non-zero run and reports how many follow-up runs it performed;
+  `TAKT_QUEUE_AUTO_CONTINUE_MAX` caps the chain (default 20, `0` disables).
+  `takt_stop` resets the continuation budget, and `takt exec` sessions never
+  chain.
+  The queue session also ends when the queue drains: a later status read, exec,
+  or workflow run cannot start a `takt run` on its own, and a failed task-list
+  read preserves the spent budget instead of resetting it. A malformed
+  `TAKT_QUEUE_AUTO_CONTINUE_MAX` (for example `7tasks`) falls back to the
+  default instead of being partially parsed. The queue session and its spent
+  budget travel in the broker control state, so a Pi reload keeps draining the
+  run the broker is still holding, and starting a `takt exec`, workflow, or
+  resume ends the queue session instead of leaving it armed.
 
 ## 0.6.4 - 2026-09-05
 

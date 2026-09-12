@@ -64,6 +64,10 @@ import {
   readTaskItems,
 } from "../lib/takt-state.ts";
 import {
+  decideQueueContinuation,
+  resolveMaxQueueContinuations,
+} from "../lib/takt-queue-continuation.ts";
+import {
   formatTaktLastExit,
   hasRecentTaktSummaryActivity,
   isTaktSessionHistoryVisible,
@@ -338,6 +342,14 @@ interface ManagedProject {
   /** Queue/run starts at a terminal prompt; allow one explicit initial /go. */
   pendingRunAwaitingInput?: boolean;
   queuedInputs?: TaktInputQueue;
+  /** The current bridge-owned PTY was started as `takt run` for queued tasks. */
+  queueRunActive?: boolean;
+  /** Automatic follow-up runs already started for this queue session. */
+  queueContinuationCount?: number;
+  /** A follow-up `takt run` is being started right now. */
+  queueContinuationInFlight?: boolean;
+  /** A finished queue run left pending tasks; the next refresh starts them. */
+  queueContinuationArmed?: boolean;
 }
 
 interface TaktExecTracking {
@@ -761,6 +773,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     project: ManagedProject,
     onUpdate?: (message: string) => void,
     signal?: AbortSignal,
+    options: { autoContinue?: boolean } = {},
   ): Promise<number> {
     const context = this.context;
     if (!context?.hasUI) {
@@ -798,6 +811,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     try {
       await project.runner.start(["run"]);
       project.pendingRunAwaitingInput = true;
+      project.queueRunActive = true;
+      project.queueContinuationArmed = false;
+      project.queueContinuationInFlight = false;
+      project.queueContinuationCount = options.autoContinue === true
+        ? (project.queueContinuationCount ?? 0) + 1
+        : 0;
       this.setProjectStage(project, "running", onUpdate, `TAKT running all pending tasks in ${project.label}.`);
       await this.showLive(false);
       return pending;
@@ -843,6 +862,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       if (project.runner.hasSession) {
         await stopWaitDispose(project.runner, undefined, TAKT_LIFECYCLE_TIMEOUT_MS);
       }
+      this.clearQueueContinuation(project);
       await project.runner.start(preset.trim() ? ["exec", preset.trim()] : ["exec"]);
       await this.showLive();
       context.ui.notify(`TAKT exec started for ${project.label}. Use /takt:send to paste input.`, "info");
@@ -1210,6 +1230,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
       this.beginExecTracking(project);
       this.setProjectStage(project, "starting", onUpdate, `Starting takt exec ${preset} in ${project.label}…`);
+      this.clearQueueContinuation(project);
       await project.runner.start(["exec", preset]);
       await this.showLive(false);
 
@@ -1461,6 +1482,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         onUpdate,
         `Starting workflow ${normalizedWorkflow} in ${project.label}…`,
       );
+      this.clearQueueContinuation(project);
       await project.runner.start(args, env);
       await this.showLive(false);
       this.setProjectStage(project, "running", onUpdate, `TAKT running ${normalizedWorkflow} in ${project.label}.`);
@@ -1575,6 +1597,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
     try {
       this.setProjectStage(project, "starting", onUpdate, `Opening TAKT resume in ${project.label}…`);
+      this.clearQueueContinuation(project);
       await project.runner.start(resumeArgs);
       await this.showLive(false);
       await waitForTaktResumeMenu(project.runner, signal, TAKT_RESUME_MENU_TIMEOUT_MS);
@@ -1676,6 +1699,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       ? [trackedRunSlug]
       : [];
     project.execTracking = undefined;
+    this.clearQueueContinuation(project);
     if (reconciledRuns.length > 0) {
       await this.refreshProject(project, { includeTaskList: false });
     }
@@ -2121,6 +2145,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       stage: project.stage,
       ...(project.promptPreview ? { promptPreview: project.promptPreview } : {}),
       queuedInputs: [...(project.queuedInputs?.snapshot() ?? [])],
+      // The queue session is mirrored so a reload cannot lose the continuation
+      // budget while the broker keeps the run alive.
+      ...(project.queueRunActive === true ? { queueRunActive: true } : {}),
+      ...(project.queueContinuationCount !== undefined
+        ? { queueContinuationCount: project.queueContinuationCount }
+        : {}),
     });
   }
 
@@ -2129,6 +2159,13 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     if (isTaktExecStage(restored.stage)) project.stage = restored.stage;
     project.promptPreview = restored.promptPreview;
     if (restored.queuedInputs) project.queuedInputs?.restore(restored.queuedInputs);
+    // `queueContinuationInFlight`/`queueContinuationArmed` are deliberately not
+    // restored: a start that was interrupted by the reload must be re-decided by
+    // the next refresh, not replayed.
+    if (restored.queueRunActive === true) project.queueRunActive = true;
+    if (typeof restored.queueContinuationCount === "number") {
+      project.queueContinuationCount = restored.queueContinuationCount;
+    }
   }
 
   /**
@@ -2292,6 +2329,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       );
       this.notifyProjects();
       await this.showLive(false);
+      await this.runQueueContinuations();
     } finally {
       this.refreshInFlight = false;
     }
@@ -2314,7 +2352,120 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       }
     }
     project.summary = await readTaktSummary(project.cwd, options);
+    // The periodic refresh skips the task list, and a task-list-free summary
+    // always reports `pending: 0`. A finished queue run needs the live count to
+    // decide whether a follow-up run is required, so it is read here.
+    let taskListUnavailable = false;
+    if (project.queueRunActive === true && !project.runner.isRunning && options.includeTaskList !== true) {
+      try {
+        project.summary = await readTaktSummary(project.cwd, { ...options, includeTaskList: true });
+      } catch {
+        // A locked or failing task list must not break the refresh. It must not
+        // decide continuation either: the task-list-free summary above looks
+        // drained, which would reset the continuation budget and let a later
+        // refresh start more follow-up runs than the cap allows.
+        taskListUnavailable = true;
+      }
+    }
     this.reconcileExecCompletion(project);
+    if (taskListUnavailable) {
+      return;
+    }
+    this.armQueueContinuation(project, snapshot.lastExit?.code);
+  }
+
+  /**
+   * Remember that a finished queue run still has pending tasks. `takt run`
+   * claims pending tasks once, so tasks enqueued while it was running are only
+   * picked up by a follow-up run; the follow-up started from `refreshProjects`
+   * so the refresh in flight is never re-entered.
+   */
+  private armQueueContinuation(project: ManagedProject, exitCode: number | undefined): void {
+    const decision = decideQueueContinuation({
+      queueRunActive: project.queueRunActive === true,
+      continuationInFlight: project.queueContinuationInFlight === true,
+      runnerRunning: project.runner.isRunning,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      stage: project.stage,
+      pending: project.summary?.pending ?? 0,
+      continuationCount: project.queueContinuationCount ?? 0,
+      maxContinuations: resolveMaxQueueContinuations(),
+    });
+    switch (decision.reason) {
+      case "pending-tasks-remain":
+        project.queueContinuationArmed = true;
+        return;
+      case "no-pending-tasks":
+        // Queue drained: the queue session is over, so a later `takt exec` or
+        // workflow completion cannot arm a `takt run`, and the next operator
+        // start begins a fresh continuation budget.
+        this.clearQueueContinuation(project);
+        return;
+      case "previous-run-did-not-succeed":
+      case "stage-not-completed":
+        project.queueRunActive = false;
+        project.queueContinuationArmed = false;
+        return;
+      case "continuation-limit-reached":
+        // Report the stop exactly once; the queue run is over for this session.
+        if (project.queueRunActive === true) {
+          project.queueRunActive = false;
+          project.queueContinuationArmed = false;
+          this.context?.ui.notify(
+            `TAKT queue: automatic continuation stopped after ${project.queueContinuationCount ?? 0} follow-up run(s) in ${project.label}; ${project.summary?.pending ?? 0} task(s) still pending. Start the queue again with takt_run_pending.`,
+            "warning",
+          );
+        }
+        return;
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Drop the automatic-continuation budget. An operator stop ends the queue
+   * session: the next `takt run` starts from a fresh budget instead of
+   * inheriting the count of the run that was just interrupted.
+   */
+  private clearQueueContinuation(project: ManagedProject): void {
+    project.queueRunActive = false;
+    project.queueContinuationArmed = false;
+    project.queueContinuationInFlight = false;
+    project.queueContinuationCount = 0;
+    // Mirror the ended session so a reload does not restore the budget the
+    // operator already spent.
+    this.syncProjectControlState(project);
+  }
+
+  /** Start the next queued run for every project whose previous run drained part of the queue. */
+  private async runQueueContinuations(): Promise<void> {
+    const context = this.context;
+    if (!context?.hasUI) {
+      return;
+    }
+    for (const project of this.projects.values()) {
+      if (project.queueContinuationArmed !== true || project.runner.isRunning) {
+        continue;
+      }
+      const pending = project.summary?.pending ?? 0;
+      const next = (project.queueContinuationCount ?? 0) + 1;
+      project.queueContinuationArmed = false;
+      project.queueContinuationInFlight = true;
+      try {
+        context.ui.notify(
+          `TAKT queue: ${pending} pending task(s) left in ${project.label}; starting follow-up run ${next}/${resolveMaxQueueContinuations()}.`,
+          "info",
+        );
+        await this.startPendingProject(project, undefined, undefined, { autoContinue: true });
+      } catch (error) {
+        project.queueContinuationInFlight = false;
+        project.queueRunActive = false;
+        context.ui.notify(
+          `TAKT queue follow-up run failed to start for ${project.label}: ${errorMessage(error)}`,
+          "error",
+        );
+      }
+    }
   }
 
   /**
