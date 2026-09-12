@@ -323,10 +323,22 @@ interface LogTailCacheEntry {
 }
 
 const logTailCache = new Map<string, LogTailCacheEntry>();
+let logTailCacheHits = 0;
+let logTailCacheMisses = 0;
+
+/**
+ * Test seam: how many tail reads were served from the mtime+size cache since
+ * the last reset, and how many had to re-read the file.
+ */
+export function readRunLogTailCacheStats(): { hits: number; misses: number } {
+  return { hits: logTailCacheHits, misses: logTailCacheMisses };
+}
 
 /** Test seam: clear cached JSONL tail reads between isolated fixtures. */
 export function resetRunLogTailCache(): void {
   logTailCache.clear();
+  logTailCacheHits = 0;
+  logTailCacheMisses = 0;
 }
 const DIAGNOSTIC_EVENT_TYPES = new Set([
   "workflow_start",
@@ -410,8 +422,10 @@ function readLatestRunLogTail(cwd: string, runSlug: string): RunLogTailResult {
     const { mtimeMs, size } = statSync(logPath);
     const cached = logTailCache.get(logPath);
     if (cached !== undefined && cached.mtimeMs === mtimeMs && cached.size === size) {
+      logTailCacheHits += 1;
       return cached.result;
     }
+    logTailCacheMisses += 1;
     let start = 0;
     const handle = openSync(logPath, "r");
     let tailText: string;

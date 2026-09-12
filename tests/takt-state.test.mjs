@@ -460,35 +460,33 @@ test("readRunLogDiagnostics ignores non-object JSONL records and partial tail li
 });
 
 test("readLatestRunLogTail reuses parsed tail when the JSONL file is unchanged", async () => {
-  const { readRunLogDiagnostics, resetRunLogTailCache } = await import("../lib/takt-state.ts");
+  const { readRunLogDiagnostics, readRunLogTailCacheStats, resetRunLogTailCache } = await import("../lib/takt-state.ts");
   resetRunLogTailCache();
   const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-log-tail-cache-"));
   const slug = "cached-run";
   const logsDirectory = join(cwd, ".takt", "runs", slug, "logs");
   mkdirSync(logsDirectory, { recursive: true });
+  const logPath = join(logsDirectory, "run.jsonl");
   const padded = `${"x".repeat(70 * 1024)}\n{"type":"step_start","step":"plan"}\n`;
-  writeFileSync(join(logsDirectory, "run.jsonl"), padded, "utf8");
+  writeFileSync(logPath, padded, "utf8");
 
-  readRunLogDiagnostics(cwd, slug);
-  const cachedStart = performance.now();
+  assert.equal(readRunLogDiagnostics(cwd, slug).step, "plan");
+  assert.deepEqual(readRunLogTailCacheStats(), { hits: 0, misses: 1 });
+
+  // Repeated polls of an unchanged file must be served from the cache instead of
+  // re-reading and re-parsing the tail. Counting cache answers keeps this
+  // deterministic: wall-clock comparison is noise-dominated on CI hosts.
   for (let index = 0; index < 100; index += 1) {
     const diagnostics = readRunLogDiagnostics(cwd, slug);
     assert.equal(diagnostics.step, "plan");
   }
-  const cachedMs = performance.now() - cachedStart;
+  assert.deepEqual(readRunLogTailCacheStats(), { hits: 100, misses: 1 });
 
-  const uncachedStart = performance.now();
-  for (let index = 0; index < 100; index += 1) {
-    resetRunLogTailCache();
-    const diagnostics = readRunLogDiagnostics(cwd, slug);
-    assert.equal(diagnostics.step, "plan");
-  }
-  const uncachedMs = performance.now() - uncachedStart;
-
-  assert.ok(
-    cachedMs < uncachedMs * 0.6,
-    `expected cached polls (${cachedMs.toFixed(1)}ms) to beat cold reads (${uncachedMs.toFixed(1)}ms)`,
-  );
+  // A changed log invalidates the entry: the next read re-reads the file. The
+  // appended line changes the size key as well as the mtime.
+  writeFileSync(logPath, `${padded}{"type":"step_start","step":"build"}\n`, "utf8");
+  assert.equal(readRunLogDiagnostics(cwd, slug).step, "build");
+  assert.deepEqual(readRunLogTailCacheStats(), { hits: 100, misses: 2 });
   resetRunLogTailCache();
 });
 
