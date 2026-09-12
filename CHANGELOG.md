@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 - 2026-09-12
 
 - Re-attach to a live TAKT broker during the periodic refresh instead of only
   at extension startup. A run started through a replaced runtime, or one that
