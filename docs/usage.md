@@ -391,8 +391,13 @@ preview, and queued input are restored too, so an `awaiting_go` session can
 still use `takt_submit_go` after reload. Broker discovery uses an authenticated
 descriptor in a private per-user runtime directory. Quit and other real session
 shutdowns still stop the owned process; a live broker with no reconnecting
-client self-stops after five minutes. External terminals cannot be adopted
-retroactively because Marionette never owned their PTY.
+client self-stops after five minutes. Adoption is not limited to reload: the
+background refresh attaches to a running broker descriptor whenever this Pi
+session holds no live session for that project, so a run started by a replaced
+runtime instance reappears in the widget with its replayed screen and control
+state. Processes Marionette never brokered - a plain `takt` started in another
+terminal - still cannot be adopted, because there is no descriptor or
+transcript to attach to.
 
 The background project-stack refresh reads persistent `.takt/runs` metadata and
 does not invoke `takt list`. The stacked widget itself only renders TAKT

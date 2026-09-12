@@ -2301,6 +2301,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     project: ManagedProject,
     options: TaktStateOptions = {},
   ): Promise<void> {
+    await this.attachLiveBroker(project);
     const snapshot = project.runner.reconcile();
     if (snapshot.status === "completed") {
       const completedStage = project.stage === "stopping"
@@ -2314,6 +2315,36 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     project.summary = await readTaktSummary(project.cwd, options);
     this.reconcileExecCompletion(project);
+  }
+
+  /**
+   * Re-attach to a broker this Pi session is not holding in memory.
+   *
+   * Only extension startup used to attach, so a TAKT process started through a
+   * replaced runtime (or before a reload) kept running with no live widget and
+   * no readable screen. Attaching here restores the stacked widget, the raw
+   * screen, and the control state without restarting TAKT; a missing or dead
+   * broker descriptor leaves the controller empty, which `attach()` already
+   * handles.
+   */
+  private async attachLiveBroker(project: ManagedProject): Promise<void> {
+    if (project.runner.isRunning || project.runner.hasSession) {
+      return;
+    }
+    try {
+      await project.runner.attach();
+      this.restoreProjectControlState(project);
+      if (project.runner.isRunning) {
+        this.setProjectStage(project, "running");
+      }
+    } catch (error) {
+      // A broker that disappears between the descriptor read and the connect
+      // must not break the refresh loop.
+      this.context?.ui.notify(
+        `TAKT broker re-attach failed for ${project.label}: ${errorMessage(error)}`,
+        "warning",
+      );
+    }
   }
 
   private async refreshControlState(project: ManagedProject): Promise<boolean> {

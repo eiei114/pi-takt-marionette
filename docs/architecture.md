@@ -97,6 +97,14 @@ Pi command / project path
   The live widget keeps a lightweight 100 ms repaint fallback while a PTY is
   active because host-side screen callbacks may be coalesced during in-place
   terminal updates.
+- Broker adoption is not limited to startup. When a project has no live
+  in-memory session but a running broker descriptor exists - the run was started
+  by a replaced runtime instance, or the extension reconnected after the run
+  began - the periodic refresh attaches to that broker, restores the persisted
+  control state, and replays its transcript. This keeps the stacked widget, the
+  raw screen, and `takt_read_screen` aligned with the process that is actually
+  running. Attach never starts a process; a missing or dead descriptor leaves
+  the controller empty.
 - Named profiles persist an explicit alias, project cwd, and optional exec preset
   in the user config directory. The bridge does not scan arbitrary folders or
   silently guess a similarly named repository.

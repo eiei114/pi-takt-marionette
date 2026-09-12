@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Re-attach to a live TAKT broker during the periodic refresh instead of only
+  at extension startup. A run started through a replaced runtime, or one that
+  survived a reload, kept executing with an empty widget and an unreadable
+  screen until Pi restarted; the bridge now adopts the broker descriptor, the
+  control state, and the replayed screen on the next refresh.
 - Recover from a killed or crashed `takt run` without manual metadata surgery.
   `takt_enqueue_task` no longer treats a `running` record whose recorded owner
   pid is gone as active, so a dead run stops blocking later enqueues for the

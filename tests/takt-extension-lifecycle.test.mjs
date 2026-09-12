@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import register from "../extensions/index.ts";
+import { TaktRunController } from "../lib/takt-run-controller.ts";
 
 const DEAD_OWNER_PID = "999999999";
 
@@ -107,10 +108,16 @@ function createTaktCommand(directory) {
     "  process.exit(0);",
     "}",
     "if (operation === \"run\") {",
-    "  event(\"run\");",
-    "  process.stdout.write(\"Running pending tasks…\\r\\n\");",
-    "  process.on(\"SIGINT\", () => { event(\"signal:run\"); process.exit(130); });",
-    "  setTimeout(() => process.exit(0), 80);",
+    "  if (process.env.TEST_RUN_MODE === \"long\") {",
+    "    event(\"run:long\");",
+    "    process.stdout.write(\"attach-target-output\\r\\n\");",
+    "    setInterval(() => {}, 1000);",
+    "  } else {",
+    "    event(\"run\");",
+    "    process.stdout.write(\"Running pending tasks…\\r\\n\");",
+    "    process.on(\"SIGINT\", () => { event(\"signal:run\"); process.exit(130); });",
+    "    setTimeout(() => process.exit(0), 80);",
+    "  }",
     "}",
     "else if (operation === \"resume\") {",
     "  event(`resume:${args.join(\"|\")}`);",
@@ -177,6 +184,7 @@ function configureEnvironment(root, command, logPath, taskMode, listMode = "ok")
     ["TEST_PROMPT_DELAY_MS", process.env.TEST_PROMPT_DELAY_MS],
     ["TEST_WORKFLOW_EXIT_CODE", process.env.TEST_WORKFLOW_EXIT_CODE],
     ["TEST_RESUME_MODE", process.env.TEST_RESUME_MODE],
+    ["TEST_RUN_MODE", process.env.TEST_RUN_MODE],
   ]);
   process.env.APPDATA = root;
   process.env.XDG_CONFIG_HOME = root;
@@ -962,6 +970,51 @@ test("forced stop reconciles ownerless metadata without starting or killing a pr
     assert.equal(logLines(logPath).some((line) => line.startsWith("signal:")), false);
   } finally {
     await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("refresh re-attaches to a broker this Pi session does not hold", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-reattach-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "none");
+  process.env.TEST_RUN_MODE = "long";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+  let controller;
+
+  try {
+    await events.get("session_start")?.({ reason: "startup" }, context);
+    // A broker started before this extension owned the project (replaced runtime
+    // or a run that survived a reload) is invisible until refresh re-attaches.
+    controller = new TaktRunController({ cwd: project, command, cols: 60, rows: 8 });
+    await controller.start(["run"]);
+    assert.equal(controller.isRunning, true);
+
+    // The first read triggers the re-attach; xterm replays the broker transcript
+    // asynchronously, so read again once the screen has settled.
+    await invoke(tools, "takt_read_screen", { rows: 8 }, context);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const screen = await invoke(tools, "takt_read_screen", { rows: 8 }, context);
+    assert.equal(screen.details.status, "live");
+    assert.equal(screen.details.running, true);
+    assert.ok(
+      screen.details.lines.some((line) => line.includes("attach-target-output")),
+      String(screen.details.lines),
+    );
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    if (controller) {
+      try {
+        await controller.dispose();
+      } catch {
+        // The extension may already own and stop the adopted broker.
+      }
+    }
     restoreEnvironment();
   }
 });
