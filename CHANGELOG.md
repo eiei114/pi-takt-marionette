@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+- Re-attach to a live TAKT broker during the periodic refresh instead of only
+  at extension startup. A run started through a replaced runtime, or one that
+  survived a reload, kept executing with an empty widget and an unreadable
+  screen until Pi restarted; the bridge now adopts the broker descriptor, the
+  control state, and the replayed screen on the next refresh.
+- Recover from a killed or crashed `takt run` without manual metadata surgery.
+  `takt_enqueue_task` no longer treats a `running` record whose recorded owner
+  pid is gone as active, so a dead run stops blocking later enqueues for the
+  same branch. Records without a usable pid stay active.
+- `takt_stop` resolves its project from an explicit profile, the bridge-owned
+  running project, or (with `forceObserved`) the project that owns stale
+  metadata, so forced reconciliation is reachable when nothing is bridge-owned.
+  Without `forceObserved` it still never touches an external live pid.
+- "Do not start a duplicate" refusals now separate a live external run (names
+  the pid and says to stop it in the terminal or process that started it, since
+  `takt_stop` only owns bridge-started PTYs) from orphaned metadata (names
+  `forceObserved: true`), and stale-but-recent unaccounted `running` metadata is
+  the only unknown state that blocks. Quiet orphaned metadata ages out instead
+  of pinning a project to `unknown` forever: only the timestamps of active runs
+  keep that record fresh.
+- Session snapshots carry explicit ownership: a finished bridge PTY no longer
+  masks a fresh observed `running` run as `completed`, and a terminal bridge
+  stage no longer masks a live observed run either. `takt_read_screen` reports
+  `ownership`, `observedRun`, and `observedRunning`, and the live widget marks
+  an active run the bridge does not own with `🔭 observed (not bridge-owned)`.
+- Re-attaching to a surviving broker keeps the control stage it restores, so a
+  manual-GO session that outlived a replaced runtime still accepts
+  `takt_submit_go` instead of being downgraded to a plain `running` stage.
+- The owner-liveness probe treats `EPERM` and other probe failures as "still
+  alive" and only reclaims a `running` record on `ESRCH`, so an owner owned by
+  another user is never mistaken for a dead one.
+- Document the recovery order (force-observed stop, startup reconciliation,
+  re-enqueue) in `docs/usage.md` and the ownership model in
+  `docs/architecture.md`.
+
 ## 0.6.4 - 2026-09-05
 
 - Silence the headless xterm screen's parser logs so stray PTY control bytes

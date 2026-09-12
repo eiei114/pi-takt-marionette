@@ -33,6 +33,7 @@ export type MessageKey =
   | "pastingPromptStep"
   | "sendingGoStep"
   | "staleState"
+  | "observedState"
   | "workingState"
   | "doneState"
   | "failedState";
@@ -54,6 +55,7 @@ const MESSAGES: Record<TaktLang, Record<MessageKey, string>> = {
     pastingPromptStep: "pasting prompt ({chars} chars)",
     sendingGoStep: "sending /go",
     staleState: "stale",
+    observedState: "observed (not bridge-owned)",
     workingState: "working",
     doneState: "done",
     failedState: "failed",
@@ -74,6 +76,7 @@ const MESSAGES: Record<TaktLang, Record<MessageKey, string>> = {
     pastingPromptStep: "プロンプト貼付中 ({chars}文字)",
     sendingGoStep: "/go 送信中",
     staleState: "無応答",
+    observedState: "観測 (bridge 管理外)",
     workingState: "処理中",
     doneState: "完了",
     failedState: "失敗",

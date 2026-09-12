@@ -158,6 +158,14 @@ export function classifySessionStatus(
   return isProcessAlive(pid) ? "live" : "stale";
 }
 
+/**
+ * Liveness probe for a recorded owner pid.
+ *
+ * `ESRCH` is the only answer that proves the process is gone. `EPERM` means the
+ * pid exists but belongs to another user, and any other probe failure is
+ * unknown; both must stay "alive" so an unreadable or foreign owner is never
+ * reclaimed by another task on the same branch.
+ */
 export function isProcessAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -165,9 +173,14 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return !isMissingProcessError(error);
   }
+}
+
+function isMissingProcessError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return code === "ESRCH";
 }
 
 /** Workflow bundle facts the bridge can read without invoking TAKT. */
@@ -323,10 +336,22 @@ interface LogTailCacheEntry {
 }
 
 const logTailCache = new Map<string, LogTailCacheEntry>();
+let logTailCacheHits = 0;
+let logTailCacheMisses = 0;
+
+/**
+ * Test seam: how many tail reads were served from the mtime+size cache since
+ * the last reset, and how many had to re-read the file.
+ */
+export function readRunLogTailCacheStats(): { hits: number; misses: number } {
+  return { hits: logTailCacheHits, misses: logTailCacheMisses };
+}
 
 /** Test seam: clear cached JSONL tail reads between isolated fixtures. */
 export function resetRunLogTailCache(): void {
   logTailCache.clear();
+  logTailCacheHits = 0;
+  logTailCacheMisses = 0;
 }
 const DIAGNOSTIC_EVENT_TYPES = new Set([
   "workflow_start",
@@ -410,8 +435,10 @@ function readLatestRunLogTail(cwd: string, runSlug: string): RunLogTailResult {
     const { mtimeMs, size } = statSync(logPath);
     const cached = logTailCache.get(logPath);
     if (cached !== undefined && cached.mtimeMs === mtimeMs && cached.size === size) {
+      logTailCacheHits += 1;
       return cached.result;
     }
+    logTailCacheMisses += 1;
     let start = 0;
     const handle = openSync(logPath, "r");
     let tailText: string;

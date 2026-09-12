@@ -226,6 +226,43 @@ test("project stack shows input mode even with no active sessions", () => {
   assert.ok(lines.some((line) => line.includes("no active sessions")));
 });
 
+test("project stack marks an observed run the bridge does not own", () => {
+  const now = Date.now();
+  const summary = {
+    cwd: "C:/observed",
+    status: "unknown",
+    running: 1,
+    pending: 0,
+    blocked: 0,
+    failed: 0,
+    completed: 0,
+    stale: 0,
+    activityAt: new Date(now - 60_000).toISOString(),
+    runs: [{
+      slug: "killed-run",
+      task: "implement",
+      workflow: "takt-default",
+      status: "running",
+      sessionStatus: "unknown",
+      startTime: new Date(now - 120_000).toISOString(),
+    }],
+  };
+  const runner = { terminal: undefined, hasSession: true, isRunning: false, resize() {} };
+
+  const observed = renderTaktProjectStack([
+    { id: "observed", label: "observed", cwd: "C:/observed", runner, summary, stage: "completed" },
+  ], 90);
+  assert.ok(observed.some((line) => line.includes("🔭")), String(observed));
+  assert.ok(observed.some((line) => line.includes("observed (not bridge-owned)")), String(observed));
+
+  // A bridge-owned PTY keeps the plain running marker.
+  const owned = renderTaktProjectStack([
+    { id: "observed", label: "observed", cwd: "C:/observed", runner: { ...runner, isRunning: true }, summary, stage: "running" },
+  ], 90);
+  assert.ok(owned.some((line) => line.includes("🟢")), String(owned));
+  assert.ok(owned.every((line) => !line.includes("not bridge-owned")));
+});
+
 test("project stack hides quiet observed pending activity after the inactivity TTL", () => {
   const now = Date.parse("2026-08-14T01:00:00.000Z");
   const project = {

@@ -160,6 +160,38 @@ PID, stage, and last exit so agents can tell `live` / `stale` / `completed` /
 paste stages the widget shows a truncated prompt preview instead of the full
 body.
 
+### Recovering after a killed or crashed run
+
+A killed `takt run` leaves TAKT metadata behind: `.takt/tasks.yaml` keeps the
+task `running` with a dead pid, and the task's clone keeps `status: running` in
+`.takt/runs/<slug>/meta.json`. The bridge reports that honestly instead of
+claiming the session completed:
+
+- the live widget keeps a bridge-owned row only for PTYs this Pi session
+  started. An active run that the bridge does not own renders with `🔭` and
+  `observed (not bridge-owned)`;
+- `takt_read_screen` adds `ownership:` (`bridge`, `observed`, `none`),
+  `observedRun:`, and `observedRunning:` so a finished PTY no longer hides an
+  active observed run;
+- `takt_start` / `takt_run_pending` refuse a *recent* unaccounted `running`
+  record and name the recovery command instead of only saying "external
+  session".
+
+Recover in this order:
+
+1. `takt_stop { profile: "<name>", forceObserved: true }` — reconciles
+   stale/unknown `running` metadata to `aborted` without touching a live
+   external pid. Without `forceObserved` the call only stops a bridge-owned PTY.
+2. `takt_run_pending { profile: "<name>" }` — TAKT reconciles interrupted task
+   records itself at startup (`Task was interrupted before this TAKT run
+   started`), which releases the branch for the next enqueue.
+3. `takt_enqueue_task` — a `running` record whose owner pid is gone no longer
+   blocks the branch.
+
+Queued work that TAKT never started can also be released by running `takt run`
+with no pending tasks: the startup reconciliation marks the leftover record
+failed.
+
 `running` describes workflow activity. `ptyRunning` separately reports whether
 the bridge still owns a live interactive TAKT terminal. A completed workflow
 can therefore report `status: completed`, `running: false`, and
@@ -359,8 +391,13 @@ preview, and queued input are restored too, so an `awaiting_go` session can
 still use `takt_submit_go` after reload. Broker discovery uses an authenticated
 descriptor in a private per-user runtime directory. Quit and other real session
 shutdowns still stop the owned process; a live broker with no reconnecting
-client self-stops after five minutes. External terminals cannot be adopted
-retroactively because Marionette never owned their PTY.
+client self-stops after five minutes. Adoption is not limited to reload: the
+background refresh attaches to a running broker descriptor whenever this Pi
+session holds no live session for that project, so a run started by a replaced
+runtime instance reappears in the widget with its replayed screen and control
+state. Processes Marionette never brokered - a plain `takt` started in another
+terminal - still cannot be adopted, because there is no descriptor or
+transcript to attach to.
 
 The background project-stack refresh reads persistent `.takt/runs` metadata and
 does not invoke `takt list`. The stacked widget itself only renders TAKT

@@ -71,6 +71,13 @@ import {
   type TaktSessionStatus,
   type TaktSummary,
 } from "../lib/takt-types.ts";
+import {
+  describeExternalSessionBlock,
+  isUnaccountedRunningMetadata,
+  resolveProjectSessionSnapshot,
+  resolveStopProjectId,
+  type ProjectSessionSnapshot,
+} from "../lib/takt-session-recovery.ts";
 import { renderTaktDetails } from "../lib/takt-widget.ts";
 import {
   describeActiveRun,
@@ -713,7 +720,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     if (blocksNewExecution(project.summary)) {
       await this.showLive();
-      context.ui.notify(externalSessionError(project).message, "warning");
+      context.ui.notify(externalSessionError(project, this.profileNameForProject(project)).message, "warning");
       return;
     }
     const confirmed = await context.ui.confirm(
@@ -778,7 +785,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     if (blocksNewExecution(project.summary)) {
       await this.showLive(false);
-      throw externalSessionError(project);
+      throw externalSessionError(project, this.profileNameForProject(project));
     }
     const pending = project.summary?.pending ?? 0;
     throwIfAborted(signal);
@@ -816,7 +823,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     if (blocksNewExecution(project.summary)) {
       await this.showLive();
-      context.ui.notify(externalSessionError(project).message, "warning");
+      context.ui.notify(externalSessionError(project, this.profileNameForProject(project)).message, "warning");
       return;
     }
     const preset = profile?.preset ?? await context.ui.input("TAKT exec preset", "Optional preset, e.g. pi-docs");
@@ -1015,8 +1022,11 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     project?: string;
     cwd?: string;
     status: TaktSessionStatus;
+    ownership: ProjectSessionSnapshot["ownership"];
+    observedRun?: ProjectSessionSnapshot["observedRun"];
     pid?: number;
     running: boolean;
+    observedRunning: boolean;
     ptyRunning: boolean;
     stage: string;
     lastExit?: TaktLastExit;
@@ -1041,7 +1051,9 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       return {
         mode: this.inputMode,
         status: "unknown",
+        ownership: "none",
         running: false,
+        observedRunning: false,
         ptyRunning: false,
         stage: "idle",
         lines: [],
@@ -1065,8 +1077,11 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       project: project.label,
       cwd: project.cwd,
       status: snapshot.status,
+      ownership: snapshot.ownership,
+      ...(snapshot.observedRun ? { observedRun: snapshot.observedRun } : {}),
       ...(snapshot.pid !== undefined ? { pid: snapshot.pid } : {}),
       running: project.runner.isRunning && !isTerminalProjectStage(project.stage),
+      observedRunning: snapshot.ownership === "observed" && snapshot.observedRun !== undefined,
       ptyRunning: project.runner.isRunning,
       stage: snapshot.stage ?? "idle",
       ...(snapshot.lastExit ? { lastExit: snapshot.lastExit } : {}),
@@ -1162,7 +1177,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     try {
       project.runner.reconcile();
       if (!project.runner.isRunning && blocksNewExecution(project.summary)) {
-        throw externalSessionError(project);
+        throw externalSessionError(project, this.profileNameForProject(project));
       }
       if (project.runner.isRunning && !replace) {
         preserveExistingSession = true;
@@ -1183,7 +1198,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
       await this.refreshProject(project, { includeTaskList: true });
       if (blocksNewExecution(project.summary)) {
-        throw externalSessionError(project);
+        throw externalSessionError(project, this.profileNameForProject(project));
       }
 
       if (shouldClear) {
@@ -1387,7 +1402,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     try {
       project.runner.reconcile();
       if (!project.runner.isRunning && blocksNewExecution(project.summary)) {
-        throw externalSessionError(project);
+        throw externalSessionError(project, this.profileNameForProject(project));
       }
       if (project.runner.isRunning && !replace) {
         preserveExistingSession = true;
@@ -1404,7 +1419,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
       await this.refreshProject(project, { includeTaskList: true });
       if (blocksNewExecution(project.summary)) {
-        throw externalSessionError(project);
+        throw externalSessionError(project, this.profileNameForProject(project));
       }
 
       const issueReference = normalizedTask !== undefined && /^#\d+$/.test(normalizedTask);
@@ -1536,7 +1551,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
     project.runner.reconcile();
     if (!project.runner.isRunning && blocksNewExecution(project.summary)) {
-      throw externalSessionError(project);
+      throw externalSessionError(project, this.profileNameForProject(project));
     }
     if (project.runner.isRunning && !replace) {
       throw new Error(`TAKT is already running in ${project.label}; stop it before resuming.`);
@@ -1596,9 +1611,21 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       throw new Error("TAKT bridge requires an interactive Pi UI");
     }
 
+    // A killed run leaves TAKT metadata that still blocks later starts. When
+    // nothing is bridge-owned, `forceObserved` must still resolve the project
+    // that owns that metadata, otherwise the operator only hears "not running".
+    const activeRunning = args.trim() ? undefined : this.activeRunningProject();
+    const observed = args.trim() || activeRunning ? undefined : this.activeObservedProject();
+    const resolvedId = args.trim()
+      ? undefined
+      : resolveStopProjectId({
+        ...(activeRunning ? { activeRunningId: activeRunning.id } : {}),
+        ...(observed ? { observedId: observed.id } : {}),
+        forceObserved: options.forceObserved ?? false,
+      });
     const project = args.trim()
       ? this.ensureProject(this.resolveTargetPath(args, context.cwd))
-      : this.activeRunningProject();
+      : (resolvedId ? this.projects.get(resolvedId) : undefined) ?? activeRunning;
     project?.runner.reconcile();
     if (!project?.runner.isRunning) {
       if (project?.runner.hasSession) {
@@ -2274,6 +2301,7 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     project: ManagedProject,
     options: TaktStateOptions = {},
   ): Promise<void> {
+    await this.attachLiveBroker(project);
     const snapshot = project.runner.reconcile();
     if (snapshot.status === "completed") {
       const completedStage = project.stage === "stopping"
@@ -2287,6 +2315,41 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
     project.summary = await readTaktSummary(project.cwd, options);
     this.reconcileExecCompletion(project);
+  }
+
+  /**
+   * Re-attach to a broker this Pi session is not holding in memory.
+   *
+   * Only extension startup used to attach, so a TAKT process started through a
+   * replaced runtime (or before a reload) kept running with no live widget and
+   * no readable screen. Attaching here restores the stacked widget, the raw
+   * screen, and the control state without restarting TAKT; a missing or dead
+   * broker descriptor leaves the controller empty, which `attach()` already
+   * handles.
+   */
+  private async attachLiveBroker(project: ManagedProject): Promise<void> {
+    if (project.runner.isRunning || project.runner.hasSession) {
+      return;
+    }
+    try {
+      await project.runner.attach();
+      this.restoreProjectControlState(project);
+      // `setProjectStage` mirrors the stage back into the broker, so overwriting
+      // a restored control stage would destroy the gate it encodes: a session
+      // restored as `awaiting_go` would look like a plain run and refuse
+      // `takt_submit_go`. Only a stage with no live meaning (`idle`, or a
+      // terminal stage from the previous PTY) needs to become `running`.
+      if (project.runner.isRunning && (project.stage === "idle" || isTerminalProjectStage(project.stage))) {
+        this.setProjectStage(project, "running");
+      }
+    } catch (error) {
+      // A broker that disappears between the descriptor read and the connect
+      // must not break the refresh loop.
+      this.context?.ui.notify(
+        `TAKT broker re-attach failed for ${project.label}: ${errorMessage(error)}`,
+        "warning",
+      );
+    }
   }
 
   private async refreshControlState(project: ManagedProject): Promise<boolean> {
@@ -2596,6 +2659,17 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       ?? [...this.projects.values()].find((project) => project.summary !== undefined);
   }
 
+  /** Registered profile name for a project, used in recovery guidance. */
+  private profileNameForProject(project: ManagedProject): string | undefined {
+    const key = projectPathKey(project.cwd);
+    for (const profile of this.profiles.values()) {
+      if (projectPathKey(profile.cwd) === key) {
+        return profile.name;
+      }
+    }
+    return undefined;
+  }
+
   /** Bridge-owned running sessions eligible for fullscreen focus, in shared deterministic order. */
   eligibleFocusSessions(): TaktFocusSession[] {
     const currentProjectId = this.context ? projectPathKey(this.context.cwd) : undefined;
@@ -2750,86 +2824,31 @@ function blocksNewExecution(summary: TaktSummary | undefined): boolean {
   if (summary.status === "live") {
     return true;
   }
-  if (summary.status === "unknown") {
-    return summary.running > 0;
-  }
-  return false;
+  // Unaccounted `running` metadata blocks only while it is still recent. Older
+  // orphaned metadata (a killed or crashed run that TAKT has not reconciled yet)
+  // must not block every later start forever; TAKT reconciles it on the next run.
+  return isUnaccountedRunningMetadata(summary);
 }
 
-function externalSessionError(project: ManagedProject): Error {
-  const status = project.summary?.status;
-  if (!status) {
-    throw new Error(`TAKT summary is unavailable for ${project.label}`);
-  }
-  return new Error(`TAKT has an external ${status} session in ${project.label}; Pi will not start a duplicate.`);
+function externalSessionError(project: ManagedProject, profileName?: string): Error {
+  return new Error(describeExternalSessionBlock({
+    label: project.label,
+    ...(profileName ? { profileName } : {}),
+    ...(project.summary ? { summary: project.summary } : {}),
+  }));
 }
 
-function projectSessionSnapshot(project: ManagedProject): {
-  status: TaktSessionStatus;
-  pid?: number;
-  stage?: string;
-  lastExit?: TaktLastExit;
-} {
+function projectSessionSnapshot(project: ManagedProject): ProjectSessionSnapshot {
   const runner = project.runner;
-  if (isTerminalProjectStage(project.stage)) {
-    return {
-      status: "completed",
-      stage: project.stage,
-      ...(runner.pid !== undefined ? { pid: runner.pid } : {}),
-      ...(runner.lastExit ? { lastExit: runner.lastExit } : {}),
-    };
-  }
-  if (runner.status === "stale") {
-    return {
-      status: "stale",
-      stage: project.stage,
-      ...(runner.pid !== undefined ? { pid: runner.pid } : {}),
-    };
-  }
-  if (runner.isRunning) {
-    return {
-      status: "live",
-      stage: project.stage,
-      ...(runner.pid !== undefined ? { pid: runner.pid } : {}),
-    };
-  }
-  const observedSummary = project.summary;
-  const bridgeCompleted = runner.lastExit !== undefined || runner.status === "completed";
-  if (
-    observedSummary &&
-    (observedSummary.status === "live" ||
-      (!bridgeCompleted &&
-        (observedSummary.status === "stale" ||
-          (observedSummary.status === "unknown" && observedSummary.running > 0))))
-  ) {
-    return snapshotObservedSummary(observedSummary);
-  }
-  if (bridgeCompleted) {
-    return {
-      status: "completed",
-      stage: project.stage,
-      ...(runner.pid !== undefined ? { pid: runner.pid } : {}),
-      ...(runner.lastExit ? { lastExit: runner.lastExit } : {}),
-    };
-  }
-  if (observedSummary) {
-    return snapshotObservedSummary(observedSummary);
-  }
-  return { status: "unknown", stage: project.stage };
-}
-
-function snapshotObservedSummary(summary: TaktSummary): {
-  status: TaktSessionStatus;
-  pid?: number;
-  stage?: string;
-  lastExit?: TaktLastExit;
-} {
-  return {
-    status: summary.status,
-    ...(summary.stage ? { stage: summary.stage } : {}),
-    ...(summary.pid !== undefined ? { pid: summary.pid } : {}),
-    ...(summary.lastExit ? { lastExit: summary.lastExit } : {}),
-  };
+  return resolveProjectSessionSnapshot({
+    stage: project.stage,
+    stageIsTerminal: isTerminalProjectStage(project.stage),
+    runnerRunning: runner.isRunning,
+    runnerStatus: runner.status,
+    ...(runner.pid !== undefined ? { runnerPid: runner.pid } : {}),
+    ...(runner.lastExit ? { runnerLastExit: runner.lastExit } : {}),
+    ...(project.summary ? { observed: project.summary } : {}),
+  });
 }
 
 function renderSummaryScreen(summary: TaktSummary): string[] {
@@ -3846,6 +3865,8 @@ export default function register(pi: ExtensionAPI): void {
       "Use takt_stop when TAKT is already running and you need a clean restart.",
       "Prefer takt_exec_prompt with replace:true for one-shot restart+submit flows.",
       "Do not shell out to taskkill or takt stop when this tool is available.",
+      "Pass the exact profile name: without it only a bridge-owned running PTY is resolved, so a killed session that left stale metadata answers \"not running\".",
+      "forceObserved reconciles stale/unknown running metadata and never kills an external live PID.",
     ],
     parameters: TAKT_STOP_PARAMETERS,
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
@@ -3896,6 +3917,8 @@ export default function register(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use takt_read_screen before sending follow-up input in pi-auto mode.",
       "Only the active bridge-owned TAKT PTY is visible; external status cards are not raw screens.",
+      "Check ownership/observedRunning: observed metadata with observedRunning true means a live run this Pi session does not own.",
+      "A completed or stale bridge PTY does not prove nothing is running; TAKT metadata decides.",
     ],
     parameters: TAKT_READ_SCREEN_PARAMETERS,
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
@@ -3906,8 +3929,13 @@ export default function register(pi: ExtensionAPI): void {
         screen.project ? `project: ${screen.project}` : "project: none",
         screen.cwd ? `cwd: ${screen.cwd}` : undefined,
         `status: ${screen.status}`,
+        `ownership: ${screen.ownership}`,
+        screen.observedRun
+          ? `observedRun: ${screen.observedRun.slug} (${screen.observedRun.status}/${screen.observedRun.sessionStatus}${screen.observedRun.pid !== undefined ? `, pid ${screen.observedRun.pid}` : ""})`
+          : undefined,
         screen.pid !== undefined ? `pid: ${screen.pid}` : undefined,
         `running: ${screen.running}`,
+        `observedRunning: ${screen.observedRunning}`,
         `ptyRunning: ${screen.ptyRunning}`,
         `stage: ${screen.stage}`,
         screen.lastExit ? `lastExit: ${formatTaktLastExit(screen.lastExit)}` : undefined,

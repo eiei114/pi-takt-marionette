@@ -68,6 +68,26 @@ Pi command / project path
   record to `aborted` while retaining unknown fields and checkpoint payloads.
   Explicit forced recovery applies only to stale/unknown records, never a live
   externally owned PID.
+- Session state carries an explicit owner: `bridge` when the reported PTY is
+  owned by this Pi session, `observed` when the state comes from `.takt`
+  metadata only, and `none` only when neither a bridge session nor observed
+  metadata determines the state. `bridge` therefore outlives the process: a
+  completed or stale PTY is still a bridge-owned session, and a finished bridge
+  PTY is not proof that no run exists. Fresh `running` metadata with no recorded
+  live pid keeps `observed` ownership even after the bridge PTY has finished,
+  and a live observed run keeps it even while the bridge stage is terminal,
+  because a killed or external `takt run` must stay visible instead of being
+  reported as `completed`. Quiet orphaned metadata ages out after the
+  observed-inactivity window so it cannot pin a project to `unknown` forever.
+  `takt_read_screen` exposes `ownership`, `observedRun`, and `observedRunning`
+  alongside `status` and `running`; consumers must read ownership together with
+  `observedRunning` (and the recorded pid) rather than inferring "nothing is
+  running" from a non-running PTY.
+- Queue reconciliation treats a `running` record whose recorded owner pid is
+  gone as inactive, so a killed run does not block later enqueues for the same
+  branch. Records without a usable pid stay active, and `takt_stop` resolves the
+  project from an explicit profile, a bridge-owned runner, or (with
+  `forceObserved`) the project that owns the stale metadata.
 - Each bridge-owned project has one detached PTY broker and one extension-side
   xterm screen. On `/reload`, the old extension disconnects without stopping
   TAKT; the new extension reconnects through the persisted broker descriptor
@@ -83,6 +103,14 @@ Pi command / project path
   The live widget keeps a lightweight 100 ms repaint fallback while a PTY is
   active because host-side screen callbacks may be coalesced during in-place
   terminal updates.
+- Broker adoption is not limited to startup. When a project has no live
+  in-memory session but a running broker descriptor exists - the run was started
+  by a replaced runtime instance, or the extension reconnected after the run
+  began - the periodic refresh attaches to that broker, restores the persisted
+  control state, and replays its transcript. This keeps the stacked widget, the
+  raw screen, and `takt_read_screen` aligned with the process that is actually
+  running. Attach never starts a process; a missing or dead descriptor leaves
+  the controller empty.
 - Named profiles persist an explicit alias, project cwd, and optional exec preset
   in the user config directory. The bridge does not scan arbitrary folders or
   silently guess a similarly named repository.

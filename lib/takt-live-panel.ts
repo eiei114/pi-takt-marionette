@@ -339,16 +339,21 @@ export function sessionRow(project: TaktProjectWidgetEntry, columns: number, now
 
   if (run && isActiveRunState(run)) {
     const elapsed = formatElapsed(run.startTime, now);
-    const dot = hb.stalled ? "⚠️" : "🟢";
+    // A run the bridge PTY does not own is observed, not bridge-owned: say so in
+    // the row, because `⚠️`/no-output then describes the observed run rather than
+    // a stalled bridge session.
+    const bridgeOwned = project.runner?.isRunning === true;
+    const dot = bridgeOwned ? (hb.stalled ? "⚠️" : "🟢") : "🔭";
     const queued = project.queueDepth !== undefined && project.queueDepth > 0
       ? ` ⏳q${project.queueDepth}`
       : "";
+    const ownership = bridgeOwned ? "" : ` · ${t("observedState")}`;
     return composeTaktRow(
       `${spin} ${dot} `,
       project.label,
       workflow,
       stepSlot(describeActiveRun(run)),
-      `${queued}${elapsed ? ` · ${elapsed}` : ""}`,
+      `${queued}${elapsed ? ` · ${elapsed}` : ""}${ownership}`,
       columns,
     );
   }
