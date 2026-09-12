@@ -185,6 +185,7 @@ function configureEnvironment(root, command, logPath, taskMode, listMode = "ok")
     ["TEST_WORKFLOW_EXIT_CODE", process.env.TEST_WORKFLOW_EXIT_CODE],
     ["TEST_RESUME_MODE", process.env.TEST_RESUME_MODE],
     ["TEST_RUN_MODE", process.env.TEST_RUN_MODE],
+    ["TAKT_QUEUE_AUTO_CONTINUE_MAX", process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX],
   ]);
   process.env.APPDATA = root;
   process.env.XDG_CONFIG_HOME = root;
@@ -573,6 +574,42 @@ test("run pending starts all queued tasks through the shared bridge PTY lifecycl
       return current.details.status === "completed" ? current : undefined;
     });
     assert.equal(screen.details.stage, "completed");
+  } finally {
+    await events.get("session_shutdown")?.({ reason: "quit" }, context);
+    restoreEnvironment();
+  }
+});
+
+test("queue continues with a follow-up run while pending tasks remain", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-auto-continue-"));
+  const project = join(root, "project");
+  mkdirSync(project);
+  const logPath = join(root, "events.log");
+  const command = createTaktCommand(root);
+  mkdirSync(join(root, "builtins", "en", "workflows"), { recursive: true });
+  writeFileSync(join(root, "builtins", "en", "workflows", "default.yaml"), "name: default\nsteps: []\n", "utf8");
+  writeProfile(root, project);
+  const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
+  process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX = "2";
+  const { tools, events } = loadExtension();
+  const context = createContext(project);
+
+  try {
+    const result = await invoke(tools, "takt_run_pending", { profile: "pi-docs" }, context);
+    assert.equal(result.details.started, true);
+
+    // The fake `takt list` keeps reporting one pending task, so the bridge must
+    // chain one operator run plus two follow-ups and then stop at the cap.
+    await waitFor(
+      () => context.notifications.some((entry) => /automatic continuation stopped after 2 follow-up run/.test(entry.message)),
+      25_000,
+    );
+    const runs = logLines(logPath).filter((line) => line === "run").length;
+    assert.equal(runs, 3, `expected the initial run plus two follow-ups, saw ${runs}`);
+    assert.ok(
+      context.notifications.some((entry) => /follow-up run 1\/2/.test(entry.message)),
+      JSON.stringify(context.notifications),
+    );
   } finally {
     await events.get("session_shutdown")?.({ reason: "quit" }, context);
     restoreEnvironment();

@@ -26,6 +26,30 @@ The bridge owns direct task-file persistence with TAKT-compatible locking and
 atomic replacement. `takt exec` is separate instant/interactive mode, not the
 normal queue/run path.
 
+### Queue auto-continue
+
+`takt run` claims the pending tasks once, at startup. A task enqueued while a run
+is active is therefore invisible to that run and would wait in
+`.takt/tasks.yaml` until someone starts `takt run` again. The bridge closes that
+gap for queue runs:
+
+- when a bridge-owned `takt run` exits **successfully** and pending tasks remain,
+  the bridge starts the next `takt run` automatically and notifies
+  `follow-up run N/max`;
+- the chain continues while each run succeeds, up to
+  `TAKT_QUEUE_AUTO_CONTINUE_MAX` follow-up runs (default `20`). `0` disables
+  automatic continuation;
+- the chain stops without starting anything when a run is stopped, aborts, or
+  exits non-zero, and reports
+  `automatic continuation stopped after N follow-up run(s)`;
+- `takt_stop` ends the queue session, so the next operator start begins a fresh
+  continuation budget;
+- `takt exec` sessions never chain; auto-continue belongs to queue runs only.
+
+Use it when several tasks are already queued (or when you keep enqueueing while
+one runs) and you want the queue to drain without a manual `takt_run_pending`
+between tasks. When it stops, start the queue again with `takt_run_pending`.
+
 For agent-driven work, start with the bundled `takt-pi-orchestrator` Skill. It
 asks the minimum TAKT target/intent/setup questions, then routes to
 `takt-pi-next-step`, `takt-pi-task-planner`, or `takt-pi-runner`.

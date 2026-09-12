@@ -36,6 +36,15 @@
 - Document the recovery order (force-observed stop, startup reconciliation,
   re-enqueue) in `docs/usage.md` and the ownership model in
   `docs/architecture.md`.
+- Drain the TAKT task queue without a manual restart. `takt run` claims pending
+  tasks only at startup, so tasks enqueued while a run was active waited for the
+  next `takt_run_pending`. After a bridge-owned queue run exits successfully and
+  pending tasks remain, the bridge now starts the next `takt run` automatically
+  and reports `follow-up run N/max` per start. The chain stops on a stopped,
+  aborted, or non-zero run and reports how many follow-up runs it performed;
+  `TAKT_QUEUE_AUTO_CONTINUE_MAX` caps the chain (default 20, `0` disables).
+  `takt_stop` resets the continuation budget, and `takt exec` sessions never
+  chain.
 
 ## 0.6.4 - 2026-09-05
 

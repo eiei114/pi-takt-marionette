@@ -60,6 +60,14 @@ Pi command / project path
   an explicit instant/interactive escape hatch, not the normal route.
 - Public TAKT CLI commands are used through a PTY so TAKT sees a real terminal
   and keeps its normal screen behavior.
+- `takt run` claims pending tasks once, so the bridge owns queue continuation:
+  after a bridge-owned queue run exits with code 0 and the live task list still
+  reports pending work, the periodic refresh starts the next `takt run` for the
+  same project. The decision is a pure policy (`lib/takt-queue-continuation.ts`,
+  cap `TAKT_QUEUE_AUTO_CONTINUE_MAX`, default 20). A stopped, aborted, or
+  non-zero run ends the queue session instead of chaining, and `takt exec`
+  sessions never chain. Pending counts come from an explicit task-list read
+  because the periodic refresh otherwise reads run metadata only.
 - `.takt/runs/*/meta.json` is the persistent run state source. NDJSON logs are
   a diagnostic source; they are not used to replace the live terminal output.
   Status views distinguish `live`, `stale`, `completed`, and `unknown`, and
