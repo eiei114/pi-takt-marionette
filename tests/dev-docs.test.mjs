@@ -23,6 +23,18 @@ test("CONTRIBUTING and PR template agree on local Pi testing", () => {
   assert.match(prTemplate, /pi -e \./);
 });
 
+test("runner skill project-setup example matches current package naming", () => {
+  const runner = readFileSync(join(repoRoot, "skills", "takt-pi-runner", "SKILL.md"), "utf8");
+  const usage = readFileSync(join(repoRoot, "docs", "usage.md"), "utf8");
+
+  assert.match(runner, /`pi-takt-marionette` bridge tools/);
+  assert.match(runner, /"profile": "pi-takt-marionette"/);
+  assert.doesNotMatch(runner, /"profile": "pi-takt-bridge"/);
+  assert.match(usage, /"profile": "pi-takt-marionette"/);
+  assert.doesNotMatch(usage, /takt_start/);
+  assert.match(usage, /\/takt:start.*takt_run_pending/);
+});
+
 test("Pi model preflight documents the executor/model boundary", () => {
   const skill = readFileSync(
     join(repoRoot, "skills", "takt-pi-model-preflight", "SKILL.md"),
