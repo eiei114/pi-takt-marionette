@@ -5,7 +5,7 @@ description: Execute finalized issue and development tasks through TAKT using Pi
 
 # TAKT Pi Runner
 
-Run TAKT through the `pi-takt-bridge` tool. The bridge owns the PTY, project
+Run TAKT through the `pi-takt-marionette` bridge tools. The bridge owns the PTY, project
 cwd, preset, prompt submission, and `/go`; this keeps raw TAKT output visible
 above the normal Pi editor.
 
@@ -17,7 +17,7 @@ target `cwd`, a stable `profile` name, and the intended `preset`:
 
 ```json
 {
-  "profile": "pi-takt-bridge",
+  "profile": "pi-takt-marionette",
   "cwd": "C:/Users/Keisu/Projects/OSS/pi-takt-marionette",
   "preset": "pi-docs",
   "copyGlobalPreset": true

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Refresh the runner skill project-setup example and recovery docs to use
+  `pi-takt-marionette` naming and `/takt:start` instead of the removed
+  `takt_start` tool reference.
+
 ## 0.7.0 - 2026-09-12
 
 - Re-attach to a live TAKT broker during the periodic refresh instead of only

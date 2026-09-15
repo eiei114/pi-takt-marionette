@@ -206,7 +206,7 @@ claiming the session completed:
 - `takt_read_screen` adds `ownership:` (`bridge`, `observed`, `none`),
   `observedRun:`, and `observedRunning:` so a finished PTY no longer hides an
   active observed run;
-- `takt_start` / `takt_run_pending` refuse a *recent* unaccounted `running`
+- `/takt:start` / `takt_run_pending` refuse a *recent* unaccounted `running`
   record and name the recovery command instead of only saying "external
   session".
 
