@@ -27,12 +27,15 @@ Before opening a PR:
 
 ## Release
 
-Releases publish `pi-takt-marionette` through npm Trusted Publishing. Do not add
-long-lived npm tokens to GitHub Secrets.
+Release `pi-takt-marionette` by bumping `version` in `package.json` and
+`package-lock.json` in the PR that prepares the release:
 
 ```bash
-npm version patch
-git push
+npm version <patch|minor|major> --no-git-tag-version
 ```
 
-See `docs/release.md` for Trusted Publisher settings.
+Add the matching `CHANGELOG.md` section, then merge. A `package.json` version
+change on `main` creates the `vX.Y.Z` tag and publishes through npm Trusted
+Publishing; do not add long-lived npm tokens to GitHub Secrets. See
+`docs/release.md` for the full flow, the manual tag path, and Trusted
+Publisher settings.

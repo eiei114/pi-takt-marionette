@@ -28,6 +28,28 @@ _Avoid_: 末尾のぶった切り, right-edge clipping
 The raw-input listener that normalizes F6 and Ctrl+Option+T/Ctrl+Alt+T bytes before Pi's editor or the focused TAKT PTY receives them. It exists as a macOS terminal compatibility path; unknown bytes pass through unchanged.
 _Avoid_: global input forwarding, PTY hijack
 
+**Queue continuation** (キュー継続):
+The bridge rule that a successful, bridge-owned `takt run` starts the next
+`takt run` automatically while pending tasks remain, up to
+`TAKT_QUEUE_AUTO_CONTINUE_MAX` follow-up runs. The active queue session and its
+spent budget belong to the broker and end on a stop, an abort, a non-zero exit,
+a drained queue, or a non-queue launch.
+_Avoid_: 自動リトライ, task auto-retry
+
+**Observed ownership** (観測所有):
+The state of an active TAKT run that is known from `.takt` metadata rather than
+from a PTY owned by this Pi session. Observed runs stay visible to diagnostics
+and are marked `🔭 observed (not bridge-owned)`, but they are never writable,
+never stopped, and never adopted.
+_Avoid_: 外部セッションの所有, external bridge session
+
+**Workflow catalog** (ワークフローカタログ):
+The read-only seam that resolves selectable standalone workflows for one target
+by project > user-global > builtin precedence, honoring builtin enablement and
+excluding callable/internal helpers. Catalog failure is fail-closed; `default`
+is never chosen silently.
+_Avoid_: ワークフロー一覧のフォールバック, default workflow fallback
+
 **TAKT/Pi provider boundary** (TAKT/Piプロバイダー境界):
 The two-layer model contract in which TAKT's `provider: pi` selects the
 executor and `model: <pi-provider>/<pi-model>` selects the model inside Pi.

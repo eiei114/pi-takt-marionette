@@ -1,31 +1,42 @@
 # Roadmap
 
-## Phase 0 — current
+Released behavior is documented in [`CHANGELOG.md`](CHANGELOG.md) and the
+[`docs/`](docs) guides. This file tracks shipped scope and what is left.
 
-- ACP handshake and enqueue path
-- Worktree-preserving `takt run` PTY and live Pi project stack widget
-- Registered multi-project folders with external `.takt` state detection
-- Named project profiles that resolve a folder and default exec preset once
-- Bundled `takt-pi-runner` Skill and `takt_exec_prompt` automation tool
-- Fresh `takt exec` PTY and explicit multiline `/takt:send` input
-- Persistent `.takt/runs/*/meta.json` reconciliation
-- Optional diagnostic overlay and live widget start/stop commands
+## Shipped (through 0.7.0)
 
-## Phase 1 — next
+- Direct, lock-protected enqueue: `.takt/tasks.yaml` plus per-task `order.md`,
+  with the persisted `workflow`, `worktree`, `auto_pr`, and `draft_pr` fields
+  verified before a task counts as queued
+- Public `takt run` / `takt exec` / `takt resume` execution inside a detached
+  PTY broker with raw-screen replay across Pi `/reload`
+- Session-owned stacked live widget with width-aware name elision, heartbeat
+  spinner, elapsed clock, retained run outcomes, and three-day history filtering
+- Actionable workflow catalog (project > user-global > builtin) with explicit
+  per-task workflow selection
+- Exact builtin or project workflow execution (`takt_run_workflow`) with native
+  `--pr` review context, provider/model routing, and per-run temporary Pi
+  extensions
+- Queue auto-continue: a successful bridge-owned `takt run` drains remaining
+  pending tasks without a manual `takt_run_pending` between tasks
+- Killed-run recovery without metadata surgery: explicit ownership, the
+  `forceObserved` stop, and TAKT's own startup reconciliation
+- Dual input modes (`pi` → `takt` → `pi-auto`) with a platform keyboard
+  adapter, macOS `spawn-helper` repair, and required Pi model-route preflight
+- Diagnostic overlay with bounded NDJSON log details and an ASCII workflow
+  progress line
 
-- [x] Dual input modes cycled by shortcut: `pi` → `takt` → `pi-auto`
-- [x] TAKT focus mode with Esc back to Pi; widget shows the active input mode
-- [x] Pi-auto tools (`takt_read_screen`, `takt_send_input`) with confirm for destructive actions
-- [x] Agent recovery tools (`takt_stop`, `takt_set_mode`) and `takt_exec_prompt(replace)`
-- [x] Exec stage visibility + paste preview overlay; auto `pi-auto` after submit
+## Next
+
 - PTY resize, mouse/scrollback, and alternate-screen polish
-- NDJSON detail view linked from the diagnostic overlay
-- [x] Better task/run matching and stale-process diagnostics with live/stale/completed/unknown state
-- [x] Cross-platform natural-exit PTY lifecycle regression test
-- Safe raw-output capture/attach protocol for externally started TAKT sessions
+- Linked NDJSON detail view reached from the diagnostic overlay, beyond the
+  compact `log details` line
+- Safe raw-output capture/attach protocol for TAKT sessions started outside
+  Marionette
 
-## Phase 2 — later
+## Later
 
-- Explicit worktree selection and per-task start
-- Direct execution only when an isolated workspace is explicit
-- Optional ACP-backed live execution updates
+- Structured live-execution updates from TAKT instead of screen state alone, if
+  TAKT exposes a non-PTY surface for them
+- Richer cross-project history views that keep the session-owned execution
+  boundary intact
