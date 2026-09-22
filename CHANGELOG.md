@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.1 - 2026-09-22
+
+- Stop an operator takeover from racing queue auto-continue. `takt_exec_prompt`,
+  `takt_run_workflow`, `takt_resume_run`, `/takt:exec`, and `takt_stop` ended
+  the queue session only after stopping and refreshing the project, so their own
+  refresh could arm and start another `takt run` in the middle of the teardown.
+  The takeover then failed with "TAKT process is already running" and the
+  automatic chain survived the operator's intent. Operator paths now end the
+  queue session before the current run is touched.
+- Drop an armed continuation once the project stage has left `completed`, so a
+  stop or takeover that lands between arming and the next tick cannot start a
+  follow-up run.
+- A follow-up start that an operator interrupts is no longer reported as a queue
+  failure: `runQueueContinuations` stays quiet when the queue session already
+  ended, and the interrupted start keeps the operator's newer stage instead of
+  overwriting it with `failed`.
+- Assert the takeover contract in the queue-continuation lifecycle test: after
+  an operator exec takeover, no third `takt run` is logged.
+
 ## 0.8.0 - 2026-09-22
 
 - Refresh the runner skill project-setup example and recovery docs to use

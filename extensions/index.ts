@@ -803,6 +803,9 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     const pending = project.summary?.pending ?? 0;
     throwIfAborted(signal);
 
+    // A start that replaces an active queue run is an automatic continuation.
+    // Its failure must not overwrite a newer operator stage.
+    const replacesQueueSession = options.autoContinue === true || project.queueRunActive === true;
     project.runner.reconcile();
     if (project.runner.hasSession) {
       await project.runner.dispose();
@@ -821,7 +824,13 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       await this.showLive(false);
       return pending;
     } catch (error) {
-      this.setProjectStage(project, "failed", onUpdate);
+      // When an operator ended the queue session during this start, the start
+      // failure is that interruption and the operator's newer stage stays
+      // authoritative.
+      const sessionEndedByOperator = replacesQueueSession && project.queueRunActive !== true;
+      if (!sessionEndedByOperator) {
+        this.setProjectStage(project, "failed", onUpdate);
+      }
       throw error;
     }
   }
@@ -859,10 +868,13 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
 
     try {
       project.runner.reconcile();
+      // Operator stop/exec paths end the queue session before the current run
+      // is torn down so a concurrent continuation cannot start a `takt run`
+      // while the operator is taking over.
+      this.clearQueueContinuation(project);
       if (project.runner.hasSession) {
         await stopWaitDispose(project.runner, undefined, TAKT_LIFECYCLE_TIMEOUT_MS);
       }
-      this.clearQueueContinuation(project);
       await project.runner.start(preset.trim() ? ["exec", preset.trim()] : ["exec"]);
       await this.showLive();
       context.ui.notify(`TAKT exec started for ${project.label}. Use /takt:send to paste input.`, "info");
@@ -1187,6 +1199,12 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
 
     const project = this.ensureProject(profile.cwd);
+    // End the queue session before the takeover touches this project. The
+    // takeover refreshes the project itself while it stops the current run, so
+    // an armed continuation could otherwise start a fresh `takt run` in the
+    // middle of the teardown and make the following `takt clear` fail with
+    // "TAKT process is already running".
+    this.clearQueueContinuation(project);
     await this.refreshProject(project, { includeTaskList: true });
     const replace = options.replace !== false;
     const shouldClear = replace || options.clear !== false;
@@ -1415,6 +1433,8 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
     }
 
     const project = this.ensureProject(profile.cwd);
+    // See executePrompt: the operator ends the queue session before teardown.
+    this.clearQueueContinuation(project);
     await this.refreshProject(project, { includeTaskList: true });
     const replace = options.replace !== false;
     let replaced = false;
@@ -1567,6 +1587,8 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       throw new Error(`TAKT profile not found: ${profileName}. Run takt_project_setup first.`);
     }
     const project = this.ensureProject(profile.cwd);
+    // See executePrompt: the operator ends the queue session before teardown.
+    this.clearQueueContinuation(project);
     await this.refreshProject(project, { includeTaskList: true });
     const replace = options.replace !== false;
     let replaced = false;
@@ -1681,6 +1703,9 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         ownedPid !== undefined && run.pid === ownedPid && run.status === "running"
       );
     const trackedRunSlug = trackedRun?.slug ?? project.execTracking?.runSlug;
+    // The operator owns the queue session from here on: drop the continuation
+    // budget before the run is torn down so nothing chains another `takt run`.
+    this.clearQueueContinuation(project);
     this.setProjectStage(project, "stopping");
     try {
       await project.runner.stop();
@@ -2447,6 +2472,20 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
       if (project.queueContinuationArmed !== true || project.runner.isRunning) {
         continue;
       }
+      // The stage can change between arming and this tick: an operator stop or
+      // takeover sets stopping/clearing/starting. Only a completed queue run may
+      // chain a follow-up, so the armed flag is dropped instead of starting.
+      if (project.stage !== "completed") {
+        project.queueContinuationArmed = false;
+        continue;
+      }
+      // An operator takeover also ends the queue session itself, sometimes
+      // before it touches the stage. Then there is nothing left to continue and
+      // no follow-up to announce.
+      if (project.queueRunActive !== true) {
+        project.queueContinuationArmed = false;
+        continue;
+      }
       const pending = project.summary?.pending ?? 0;
       const next = (project.queueContinuationCount ?? 0) + 1;
       project.queueContinuationArmed = false;
@@ -2459,11 +2498,17 @@ class TaktBridgeRuntime implements TaktProjectStackSource {
         await this.startPendingProject(project, undefined, undefined, { autoContinue: true });
       } catch (error) {
         project.queueContinuationInFlight = false;
+        // An operator stop or takeover ends the queue session while this start
+        // is in flight. That interruption is the operator's intent, not a queue
+        // failure, so only a still-active session reports an error.
+        const sessionWasActive = project.queueRunActive === true;
         project.queueRunActive = false;
-        context.ui.notify(
-          `TAKT queue follow-up run failed to start for ${project.label}: ${errorMessage(error)}`,
-          "error",
-        );
+        if (sessionWasActive) {
+          context.ui.notify(
+            `TAKT queue follow-up run failed to start for ${project.label}: ${errorMessage(error)}`,
+            "error",
+          );
+        }
       }
     }
   }
