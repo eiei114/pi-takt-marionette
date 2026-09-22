@@ -78,8 +78,9 @@ explicit queue/run execution and recovery.
 `/takt:start` asks for confirmation, then starts `takt run` in the selected
 project inside a PTY. Pass an absolute folder path to target another registered
 or unregistered project, for example `/takt:start C:\\work\\repo`. TAKT owns
-task execution and worktree creation. The live widget shows the same terminal
-output that a normal `takt run` terminal shows, including intermediate output.
+task execution and worktree creation. The stacked widget stays summary-only; the
+raw TAKT screen (including intermediate output) is shown in `takt` focus mode
+and in explicit peeks, and `/takt:status` keeps the diagnostic view.
 `/takt:stop [path]` sends Ctrl-C and uses a bounded force-kill fallback when the
 child does not exit. A stop timeout is reported as an error; Pi never retries
 indefinitely or stops a PTY it did not create.
@@ -461,7 +462,9 @@ Rows carry discrete facts only: the resolved workflow source (`builtin`,
 distinguishable), step position (`2/3`), parallel worker completion (`w1/2`),
 queued input (`⏳q<N>`), and the elapsed `⏱ mm:ss` clock. An active run this Pi
 session does not own is marked `🔭 … observed (not bridge-owned)`, and a
-manually stopped session disappears instead of turning into a `✅` row. Names
+manually stopped session disappears from the widget instead of turning into a
+`✅` row; its persisted record is still reconciled to `aborted`, so recent
+aborted activity stays visible in the session selectors and history views. Names
 are elided as `head…tail` by width priority: label > workflow > step.
 
 The ASCII workflow progress line belongs to the `/takt:status` overlay, not to

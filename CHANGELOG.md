@@ -5,11 +5,13 @@
 - Refresh the runner skill project-setup example and recovery docs to use
   `pi-takt-marionette` naming and `/takt:start` instead of the removed
   `takt_start` tool reference.
-- Sync the README with shipped behavior: the widget example now matches the
+- Sync the docs with shipped behavior: the widget example now matches the
   compact session rows (no synthetic progress bar), failed rows no longer
   promise an error snippet, `🔭 … observed (not bridge-owned)` is explained,
-  `/takt:profile:list` is listed, and `TAKT_QUEUE_AUTO_CONTINUE_MAX` plus the
-  on-disk registry location are documented.
+  the start/stop section no longer promises raw terminal output in the default
+  widget, a manually stopped session is scoped to the widget rather than to
+  history, `/takt:profile:list` is listed, and `TAKT_QUEUE_AUTO_CONTINUE_MAX`
+  plus the on-disk registry location are documented.
 - Attribute the ASCII workflow progress line to the `/takt:status` overlay in
   `docs/usage.md` and `docs/architecture.md` instead of project cards, and drop
   the removed external "status card" from the architecture boundaries.
