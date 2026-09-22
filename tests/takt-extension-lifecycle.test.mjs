@@ -796,6 +796,17 @@ test("starting an exec ends the queue session", async () => {
       1,
       JSON.stringify(context.notifications),
     );
+    // The takeover ends the queue session: no `takt run` may be logged after
+    // the operator's exec starts, even though the task list still reports
+    // pending work.
+    const log = logLines(logPath);
+    const takeoverIndex = log.indexOf("exec:takeover");
+    assert.ok(takeoverIndex >= 0, `exec takeover did not start: ${JSON.stringify(log)}`);
+    assert.equal(
+      log.slice(takeoverIndex).filter((line) => line === "run").length,
+      0,
+      `chained a takt run after the takeover: ${JSON.stringify(log)}`,
+    );
   } finally {
     await events.get("session_shutdown")?.({ reason: "quit" }, context);
     restoreEnvironment();

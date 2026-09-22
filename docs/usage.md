@@ -46,9 +46,11 @@ gap for queue runs:
   sent instead when the cap stops the chain - either because
   `TAKT_QUEUE_AUTO_CONTINUE_MAX` follow-up runs were already used, or because
   the cap is `0` and pending tasks are left;
-- starting a `takt exec`, workflow, or resume ends the queue session: those
-  launches never chain a `takt run`, and a reload of Pi keeps the queue session
-  (and its spent budget) attached to the broker that is still running it;
+- starting a `takt exec`, workflow, or resume ends the queue session before
+  the current run is torn down, so an operator takeover cannot be raced by a
+  follow-up: those launches never chain a `takt run`, and a reload of Pi keeps
+  the queue session (and its spent budget) attached to the broker that is still
+  running it;
 - when the queue drains (no pending task is left), the queue session ends
   quietly. A later `takt exec` or workflow run never chains a `takt run`;
 - `takt_stop` ends the queue session, so the next operator start begins a fresh
