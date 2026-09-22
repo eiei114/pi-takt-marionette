@@ -78,8 +78,9 @@ explicit queue/run execution and recovery.
 `/takt:start` asks for confirmation, then starts `takt run` in the selected
 project inside a PTY. Pass an absolute folder path to target another registered
 or unregistered project, for example `/takt:start C:\\work\\repo`. TAKT owns
-task execution and worktree creation. The live widget shows the same terminal
-output that a normal `takt run` terminal shows, including intermediate output.
+task execution and worktree creation. The stacked widget stays summary-only; the
+raw TAKT screen (including intermediate output) is shown in `takt` focus mode
+and in explicit peeks, and `/takt:status` keeps the diagnostic view.
 `/takt:stop [path]` sends Ctrl-C and uses a bounded force-kill fallback when the
 child does not exit. A stop timeout is reported as an error; Pi never retries
 indefinitely or stops a PTY it did not create.
@@ -127,9 +128,13 @@ project-targeting commands:
 /takt:status pi-docs
 ```
 
-`/takt:profile` lists saved profiles and `/takt:profile:remove pi-docs` removes
-the alias without removing the watched project folder. Profile data lives in
-the user config directory. The bridge never searches arbitrary directories or
+`/takt:profile` and `/takt:profile:list` list saved profiles and
+`/takt:profile:remove pi-docs` removes the alias without removing the watched
+project folder. Profile data lives in the user config directory
+(`%APPDATA%\pi-takt-bridge` on Windows, `$XDG_CONFIG_HOME` or
+`~/.config/pi-takt-bridge` on macOS and Linux); the folder name is kept from
+before the package rename so saved registrations keep resolving. The bridge
+never searches arbitrary directories or
 silently selects a similarly named repository. `@pi-docs` is accepted as an
 explicit alias form.
 
@@ -442,12 +447,32 @@ the bridge does not delete `.takt/tasks.yaml` entries or run history, so a
 pending task can still be inspected and deliberately removed with TAKT's own
 task-management flow.
 
-When a running run has a workflow bundle, each project card shows its current
-step and phase as a compact monospace bar, for example
+The stacked live widget stays summary-only: one compact, session-owned row per
+bridge-owned TAKT process.
+
+```text
+input: ⌨️ You are typing in Pi · TAKT runs beside you · cycle: F6 or /takt:mode
+🎭 TAKT · 3 sessions · 1 running · 2 done
+⠋ 🟢 repo-a · dual · builtin 🔨 implement 2/3 w1/2 · ⏱ 04:32
+✅ repo-b · review · project — done · 12m
+```
+
+Rows carry discrete facts only: the resolved workflow source (`builtin`,
+`user`, or `project`, printed next to the workflow name so duplicate names stay
+distinguishable), step position (`2/3`), parallel worker completion (`w1/2`),
+queued input (`⏳q<N>`), and the elapsed `⏱ mm:ss` clock. An active run this Pi
+session does not own is marked `🔭 … observed (not bridge-owned)`, and a
+manually stopped session disappears from the widget instead of turning into a
+`✅` row; its persisted record is still reconciled to `aborted`, so recent
+aborted activity stays visible in the session selectors and history views. Names
+are elided as `head…tail` by width priority: label > workflow > step.
+
+The ASCII workflow progress line belongs to the `/takt:status` overlay, not to
+the widget. For an active run with a workflow bundle it renders as one compact
+monospace line, for example
 `flow default · builtin [##########>---------] 2/3 step: implement · p1/3 execute`.
-The resolved source (`builtin`, `user`, or `project`) stays visible so duplicate
-workflow names remain distinguishable. Before run metadata is available, the
-bar tracks bridge stages such as `waiting prompt` and `sending go` instead.
+Bridge lifecycle stages such as `waiting prompt` and `sending go` appear on the
+overlay's `stage:` line until run metadata is available.
 
 ### Per-step model selection (`/takt:models`)
 

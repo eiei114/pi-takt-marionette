@@ -19,14 +19,15 @@ projects in stacked live widgets inside the Pi TUI.
 
 This is an early MVP. It writes TAKT pending task files directly for enqueueing
 and runs public TAKT CLI commands inside real PTYs.
-The live widget renders TAKT's terminal screen (including in-progress output,
-ANSI control sequences, and prompts) instead of reducing bridge-owned
-execution to a status widget. It clears automatically when the bridge-owned
-process exits or is stopped, or when the bridge-tracked exec run reaches a
-terminal status. Historical completed runs never trigger that transition;
-when counts are all zero during startup, only the current project gets a
-compact `preparing` card. Final diagnostics remain available through
-`/takt:status` and `takt_read_screen`.
+Bridge-owned terminal output is rendered as a real screen: in `takt` focus mode
+and in raw peeks, in-progress output, ANSI control sequences, and prompts are
+decoded through an xterm-compatible headless buffer instead of being dumped as
+broken escape codes. The default stacked widget stays summary-only. The widget
+clears automatically when the bridge-owned process exits or is stopped, or when
+the bridge-tracked exec run reaches a terminal status. Historical completed runs
+never trigger that transition; when counts are all zero during startup, only the
+current project gets a compact `preparing` card. Final diagnostics remain
+available through `/takt:status` and `takt_read_screen`.
 
 Bridge-owned PTYs run in a detached local broker. Pi `/reload` disconnects
 only the extension client; the replacement extension reconnects to the same
@@ -81,6 +82,7 @@ pi -e .
 | `/takt:project:remove [path]` | Stop watching a registered folder |
 | `/takt:profile:add [name]` | Save a named folder and optional exec preset once |
 | `/takt:profile [name]` | List saved project profiles |
+| `/takt:profile:list` | Same as `/takt:profile` |
 | `/takt:profile:remove [name]` | Remove a saved project profile |
 | `/takt:models [workflow]` | Pick per-step Pi models for a TAKT workflow into `.takt/runtime.yaml` |
 | `/takt:start [path]` | Confirm and start pending tasks in the selected folder |
@@ -115,7 +117,10 @@ leaves the pending task for inspection as unverified and blocks execution. The
 planner never runs a task. After the user explicitly asks to execute,
 `takt_run_pending` starts one bridge-owned PTY for all pending tasks through
 public `takt run`; `/takt:start` uses the same run-controller/widget lifecycle
-with its interactive confirmation.
+with its interactive confirmation. While that run exits successfully and
+pending tasks remain, the bridge starts the next `takt run` automatically
+(queue auto-continue, capped by `TAKT_QUEUE_AUTO_CONTINUE_MAX`); see
+[`docs/usage.md`](docs/usage.md#queue-auto-continue).
 
 The bundled `takt-pi-runner` Agent Skill uses `takt_run_pending` for normal
 implementation. `takt_exec_prompt` remains an explicit instant/interactive
@@ -196,19 +201,23 @@ widget is a session-owned, summary-only view: it renders one compact row per
 TAKT process launched from this Pi session, with the most active first —
 
 ```
+input: ⌨️ You are typing in Pi · TAKT runs beside you · cycle: F6 or /takt:mode
 🎭 TAKT · 3 sessions · 1 running · 2 done
-⠋ 🟢 repo-a · dual · builtin    ███▓░░░░░░░ 🔨 implement 2/3 w1/2
-✅ repo-b · review · project    done · 12m
+⠋ 🟢 repo-a · dual · builtin 🔨 implement 2/3 w1/2 · ⏱ 04:32
+✅ repo-b · review · project — done · 12m
 ```
 
 The heartbeat spinner spins at the speed of real TAKT output: fresh writes
 keep it fast, a quiet stretch slows it, and ~30s of silence flags the row with
 ⚠️ as possibly stuck. Actively operated rows tick a live `⏱ mm:ss` elapsed
-clock from run start. Completed
-and failed sessions stop spinning (`✅` done, `🔴 … ❌ failed` plus an error
-snippet). Rows show discrete facts only — step position and parallel worker
-completion (w2/3) — instead of a synthetic progress bar. Raw PTY output is never shown by
-default: peek it explicitly with `/takt:live [path]` or `/takt:sessions`, or
+clock from run start and add `⏳q<N>` while input is queued. Completed and
+failed sessions stop spinning (`✅` done, `🔴 … ❌ failed`; the failure reason
+stays in diagnostics rather than in the row). An active run this Pi session does
+not own renders as `🔭 … · observed (not bridge-owned)` instead of a heartbeat
+dot. Rows show discrete facts only — step position and parallel worker
+completion (w2/3) — instead of a synthetic progress bar; the ASCII workflow
+progress line belongs to the `/takt:status` overlay. Raw PTY output is never
+shown by default: peek it explicitly with `/takt:live [path]` or `/takt:sessions`, or
 inspect external runs (other terminals or other Pi sessions) via
 `/takt:status [path]` or `takt_read_screen`. Inside `takt` mode the pinned
 session's raw screen is the display itself, always showing the latest viewport
@@ -256,6 +265,16 @@ npm-global paths; use absolute command paths in that case, for example:
 ```text
 TAKT_COMMAND=/opt/homebrew/bin/takt
 ```
+
+`TAKT_QUEUE_AUTO_CONTINUE_MAX` caps the queue auto-continue chain (default
+`20`, `0` disables it). A value that is not a number falls back to the default
+instead of being partially parsed.
+
+Registered projects and named profiles live outside the vault, in
+`projects.json` and `profiles.json` under the user config directory:
+`%APPDATA%\pi-takt-bridge` on Windows, `$XDG_CONFIG_HOME` or `~/.config`
+followed by `/pi-takt-bridge` on macOS and Linux. The folder name is kept from
+before the package rename so saved registrations keep resolving.
 
 No Pi provider setting is changed by this package.
 

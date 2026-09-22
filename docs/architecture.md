@@ -23,8 +23,7 @@ Pi command / project path
         ├── takt_submit_go tool ── explicit raw `/go` + Enter → pi-auto
         ├── takt_resume_run tool ── explicit provider/model → resume → Requeue → pi-auto (no clear)
         ├── takt_stop / takt_set_mode tools ── agent recovery without shell/taskkill
-        │
-        ├── takt_enqueue_task ── direct task-file enqueue + verification
+        ├── queue continuation ── successful bridge-owned `takt run` + pending work → next `takt run`
         │
         ├── keyboard adapter → normalized mode-cycle action
         └── socket client ↔ detached PTY broker → node-pty → `takt run` / `takt exec`
@@ -151,8 +150,10 @@ Pi command / project path
   public resume selection UI through the owned PTY and sends a literal Enter,
   avoiding both task replay and bracketed-paste control sequences in the menu.
 - External project processes can be detected from `.takt` metadata, but their
-  original PTY is not attachable safely. They use a status card; only
-  broker-owned projects show reconnectable raw output.
+  original PTY is not attachable safely. The session-owned widget never renders
+  them; they stay visible through explicit diagnostics (`/takt:status [path]`,
+  `takt_read_screen`), and only broker-owned projects show reconnectable raw
+  output.
 - The background project-stack refresh reads persistent `.takt/runs` metadata
   only. The public `takt list` queue is reconciled on demand by diagnostics and
   explicit task operations, so an invalid queue cannot fail the live widget
@@ -170,13 +171,17 @@ Pi command / project path
   for macOS terminal encodings that bypass Pi's editor key matcher; unknown
   bytes pass through unchanged.
   A successful `takt_exec_prompt` enters `pi-auto` automatically. Destructive
-  auto actions still require confirmation. External status cards are never
-  writable. Stop retries are bounded; a timeout is returned as an explicit
+  auto actions still require confirmation. Observed (non-bridge-owned) sessions
+  are never writable and are never stopped or adopted. Stop retries are bounded;
+  a timeout is returned as an explicit
   bridge error instead of starting a second process.
 - Exec progress is tracked as stages and shown in tool updates, `takt_read_screen`,
-  and the widget header. Once a run bundle is available, the project card also
-  renders an ASCII progress bar from the workflow's current step and phase;
-  bridge lifecycle stages provide the fallback before `meta.json` is complete.
+  and the widget rows. The `/takt:status` overlay renders an ASCII progress line
+  from the active run's workflow bundle (step position and phase, with the
+  resolved workflow source); bridge lifecycle stages such as `waiting prompt`
+  appear on the overlay's `stage:` line before `meta.json` is complete. The
+  stacked widget itself stays summary-only: discrete facts such as step
+  position, worker completion, queued input, and elapsed time.
   Natural PTY exits reconcile the controller, retained
   screen session, stage, and last exit before another exec is allowed. For an
   interactive `takt exec`, the bridge also tracks the run slug created after
@@ -190,10 +195,11 @@ Pi command / project path
   truncated prompt preview instead of the full raw body.
 - Workflow rows show the resolved source layer (`builtin`, `user`, or
   `project`) rather than labeling every builtin as `(default)`.
-- External pending, blocked, failed, and stale activity keeps its latest queue
-  or run timestamp. Non-running cards disappear after 30 minutes without new
+- Observed (non-bridge-owned) activity keeps its latest queue or run timestamp
+  and stops resolving as the implicit target after 30 minutes without new
   activity, but the bridge never mutates `.takt/tasks.yaml` or run history as
-  part of that display cleanup.
+  part of that display cleanup. Bridge-owned rows use the separate three-day
+  session-history window below.
 - Session-owned history uses a separate three-day presentation window. Running,
   pending, and blocked work remains visible; completed, failed, stale, and
   aborted history older than three days is omitted from session selectors and

@@ -1,13 +1,35 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-09-22
 
 - Refresh the runner skill project-setup example and recovery docs to use
   `pi-takt-marionette` naming and `/takt:start` instead of the removed
   `takt_start` tool reference.
+- Sync the docs with shipped behavior: the widget example now matches the
+  compact session rows (no synthetic progress bar), failed rows no longer
+  promise an error snippet, `🔭 … observed (not bridge-owned)` is explained,
+  the start/stop section no longer promises raw terminal output in the default
+  widget, a manually stopped session is scoped to the widget rather than to
+  history, `/takt:profile:list` is listed, and `TAKT_QUEUE_AUTO_CONTINUE_MAX`
+  plus the on-disk registry location are documented.
+- Attribute the ASCII workflow progress line to the `/takt:status` overlay in
+  `docs/usage.md` and `docs/architecture.md` instead of project cards, and drop
+  the removed external "status card" from the architecture boundaries.
+- Document the automated release path in `docs/release.md` and
+  `CONTRIBUTING.md`: bump `package.json` / `package-lock.json` on the release
+  PR, and the `main` push creates the tag and publishes through Trusted
+  Publishing.
+- Refresh `ROADMAP.md` to the shipped 0.7.0 scope plus the remaining PTY,
+  NDJSON-detail, and external-attach work.
+- Add the missing `0.3.7` and `0.6.3` sections and the `0.7.0` background-poll
+  log-tail cache entry so every release tag has a CHANGELOG entry.
 
 ## 0.7.0 - 2026-09-12
 
+- Cache unchanged run JSONL tail reads on background polls. State polling
+  re-read the same 64 KiB tail on every refresh even when the file had not
+  changed; parsed tails are now cached by path, mtime, and size, and repeated
+  terminal-render allocations are avoided.
 - Re-attach to a live TAKT broker during the periodic refresh instead of only
   at extension startup. A run started through a replaced runtime, or one that
   survived a reload, kept executing with an empty widget and an unreadable
@@ -65,6 +87,9 @@
 - Silence the headless xterm screen's parser logs so stray PTY control bytes
   (for example a DEL byte after gray progress styling) no longer dump
   `xterm.js: Parsing error: ...` parser state into the Pi TUI.
+
+## 0.6.3 - 2026-09-04
+
 - Document the TAKT exec failure playbook in the runner skill: stale
   `persona_sessions.json` reset, `:thinking` suffix separation into
   `provider_options.pi.thinkingLevel`, offline-catalog model merge via
@@ -137,6 +162,13 @@
 - Run completion notifications now carry the outcome: `✅ TAKT <label>
   finished.` (info) or `🔴 TAKT <label> failed (exit N).` (error).
 - A manually stopped session hides immediately and is never rendered as ✅.
+
+## 0.3.7 - 2026-08-29
+
+- Allow explicit per-task PR delivery: the enqueue path now takes an explicit
+  worktree choice and PR mode (`none`, `regular`, or `draft`), persists
+  `worktree` / `auto_pr` / `draft_pr` on the pending task, and verifies those
+  fields after writing. Regular and draft PRs require an isolated worktree.
 
 ## 0.3.6 - 2026-08-28
 
