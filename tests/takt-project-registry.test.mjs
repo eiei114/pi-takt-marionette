@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-const { dedupeProjectPaths, loadProjectPaths, normalizeProjectPath, saveProjectPaths } = await import("../lib/takt-project-registry.ts");
+const { defaultProjectRegistryPath, dedupeProjectPaths, loadProjectPaths, normalizeProjectPath, saveProjectPaths } = await import("../lib/takt-project-registry.ts");
+const { defaultProfileRegistryPath } = await import("../lib/takt-profile-registry.ts");
+
+test("project and profile registries share the platform config root", () => {
+  const env = process.platform === "win32" ? { APPDATA: "C:\\config" } : { XDG_CONFIG_HOME: "/config" };
+  assert.equal(
+    defaultProjectRegistryPath(env).replace(/projects\.json$/, ""),
+    defaultProfileRegistryPath(env).replace(/profiles\.json$/, ""),
+  );
+});
 
 test("project registry normalizes and deduplicates folder paths", () => {
   const base = mkdtempSync(join(tmpdir(), "pi-takt-bridge-projects-"));
