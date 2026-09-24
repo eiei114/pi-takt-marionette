@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { configRoot } from "./takt-config-path.ts";
 import { normalizeProjectPath } from "./takt-project-registry.ts";
 
 const PROFILE_FILE = "profiles.json";
@@ -20,12 +20,9 @@ export function normalizeProfileName(value: string): string {
 }
 
 export function defaultProfileRegistryPath(env: NodeJS.ProcessEnv = process.env): string {
-  const configRoot = process.platform === "win32"
-    ? env.APPDATA || join(homedir(), "AppData", "Roaming")
-    : env.XDG_CONFIG_HOME || join(homedir(), ".config");
   // Stable data directory: intentionally still "pi-takt-bridge" after the
   // pi-takt-marionette rename so saved profiles/projects keep resolving.
-  return join(configRoot, "pi-takt-bridge", PROFILE_FILE);
+  return join(configRoot(env), "pi-takt-bridge", PROFILE_FILE);
 }
 
 export function loadTaktProfiles(filePath = defaultProfileRegistryPath()): TaktProjectProfile[] {
