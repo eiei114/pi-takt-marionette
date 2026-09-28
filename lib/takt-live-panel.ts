@@ -139,6 +139,11 @@ class TaktLiveTerminalWidget implements Component {
   private readonly runner: TaktLiveRunner;
   private readonly tui: { requestRender(): void };
   private readonly unsubscribe: () => void;
+  private terminal: Terminal | undefined;
+  private terminalWriteUnsubscribe: { dispose(): void } | undefined;
+  private cachedTerminalLines: string[] | undefined;
+  private cachedTerminalColumns = 0;
+  private cachedTerminalRows = 0;
   private lastWidth = 0;
   private lastRows = 0;
 
@@ -167,17 +172,39 @@ class TaktLiveTerminalWidget implements Component {
     if (!terminal) {
       return fitTaktWidgetLines(["TAKT terminal is not available."], columns);
     }
-    const lines = renderTaktTerminal(terminal);
-    return fitTaktWidgetLines(visibleWidgetLines(lines), columns);
+    if (terminal !== this.terminal) {
+      this.terminalWriteUnsubscribe?.dispose();
+      this.terminal = terminal;
+      this.terminalWriteUnsubscribe = terminal.onWriteParsed(() => {
+        this.invalidate();
+        this.tui.requestRender();
+      });
+      this.invalidate();
+    }
+    const terminalColumns = terminal.cols;
+    const terminalRowCount = terminal.rows;
+    if (
+      this.cachedTerminalLines === undefined ||
+      this.cachedTerminalColumns !== terminalColumns ||
+      this.cachedTerminalRows !== terminalRowCount
+    ) {
+      this.cachedTerminalLines = renderTaktTerminal(terminal);
+      this.cachedTerminalColumns = terminalColumns;
+      this.cachedTerminalRows = terminalRowCount;
+    }
+    return fitTaktWidgetLines(visibleWidgetLines(this.cachedTerminalLines), columns);
   }
 
   invalidate(): void {
-    // The terminal buffer is read directly on every render. This method exists
-    // to satisfy Component and to document that cached output is not used.
+    this.cachedTerminalLines = undefined;
   }
 
   dispose(): void {
     this.unsubscribe();
+    this.terminalWriteUnsubscribe?.dispose();
+    this.terminalWriteUnsubscribe = undefined;
+    this.terminal = undefined;
+    this.cachedTerminalLines = undefined;
   }
 }
 
