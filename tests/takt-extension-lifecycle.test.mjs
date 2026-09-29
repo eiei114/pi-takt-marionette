@@ -770,6 +770,8 @@ test("starting an exec ends the queue session", async () => {
   writeProfile(root, project);
   const restoreEnvironment = configureEnvironment(root, command, logPath, "pending");
   process.env.TAKT_QUEUE_AUTO_CONTINUE_MAX = "5";
+  process.env.TEST_RUN_MODE = "slow";
+  process.env.TEST_RUN_EXIT_DELAY_MS = "2500";
   const { tools, events } = loadExtension();
   const context = createContext(project);
 
@@ -778,6 +780,10 @@ test("starting an exec ends the queue session", async () => {
     await waitFor(
       () => context.notifications.some((entry) => /follow-up run 1\/5/.test(entry.message)) || undefined,
       25_000,
+    );
+    await waitFor(
+      () => logLines(logPath).filter((line) => line === "run:slow").length >= 2 || undefined,
+      15_000,
     );
     // The operator takes over with an exec session while the follow-up runs.
     // That ends the queue session: nothing may chain a `takt run` afterwards,

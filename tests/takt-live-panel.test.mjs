@@ -130,6 +130,28 @@ test("live widget keeps Pi focus and shows the current TAKT screen", async () =>
   terminal.dispose();
 });
 
+test("live widget invalidates its cached screen when the PTY parses output", async () => {
+  const terminal = new Terminal({ cols: 24, rows: 4, allowProposedApi: true });
+  let renders = 0;
+  const runner = {
+    terminal,
+    subscribe() {
+      return () => {};
+    },
+    resize() {},
+  };
+  const widget = createTaktLiveWidget(runner, { requestRender() { renders += 1; } });
+
+  await new Promise((resolve) => terminal.write("before", resolve));
+  assert.ok(widget.render(24).some((line) => line.includes("before")));
+  await new Promise((resolve) => terminal.write("\\rafter", resolve));
+  assert.ok(widget.render(24).some((line) => line.includes("after")));
+  assert.ok(renders > 0);
+
+  widget.dispose();
+  terminal.dispose();
+});
+
 test("project stack shows session-owned rows with spinner and hides raw output", async () => {
   const liveTerminal = new Terminal({ cols: 30, rows: 8, allowProposedApi: true });
   await new Promise((resolve) => liveTerminal.write("repo-a live output", resolve));
