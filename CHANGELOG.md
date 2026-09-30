@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2] - 2026-09-30
+
+### Changed
+
+- Update `@earendil-works/pi-*` dependencies to `0.99.1`.
+
+
 ## 0.8.1 - 2026-09-22
 
 - Stop an operator takeover from racing queue auto-continue. `takt_exec_prompt`,
