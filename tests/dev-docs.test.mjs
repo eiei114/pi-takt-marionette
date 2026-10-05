@@ -8,7 +8,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("README recommends package-root local dev load", () => {
   const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
-  assert.match(readme, /pi -e \./, "local dev should load the package root");
+  assert.match(readme, /npm ci[\s\S]*pi -e \./, "local dev should install dependencies before loading the package root");
   assert.doesNotMatch(
     readme,
     /pi -e[^\n]*extensions\/index\.ts/,
