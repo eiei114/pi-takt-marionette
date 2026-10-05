@@ -60,8 +60,9 @@ pi install git:github.com/eiei114/pi-takt-marionette
 For local development, load the package root so Pi picks up bundled extensions
 and skills from `package.json`:
 
-```text
+```sh
 cd /path/to/pi-takt-marionette
+npm ci
 pi -e .
 ```
 
