@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3] - 2026-10-12
+
+### Changed
+
+- Pin the Pi SDK dev/test packages to 1.1.0 while retaining the published peer
+  ranges. Add actual Pi RPC smoke coverage for extension registration, mode
+  command handling, error reporting, reload cleanup, and the native shell.
+
 ## [0.8.2] - 2026-09-30
 
 ### Changed
