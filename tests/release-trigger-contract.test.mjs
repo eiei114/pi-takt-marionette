@@ -15,6 +15,11 @@ function assertNoMergeTriggeredRelease(release, publish) {
   assert.doesNotMatch(publishTriggers, /branches:|paths:/, "main branch/package edits must not publish");
   assert.match(publishTriggers, /workflow_dispatch:/, "explicit manual publishing remains available");
   assert.match(publish, /npm publish/);
+
+  const dispatchCommand = release.match(/^\s*gh workflow run publish\.yml(?<args>[^\r\n]*)$/m);
+  assert.ok(dispatchCommand, "manual release must dispatch the publish workflow");
+  assert.match(dispatchCommand.groups.args, /--ref "\$RELEASE_TAG"/, "publish must target the release tag");
+  assert.doesNotMatch(dispatchCommand.groups.args, /(?:^|\s)-f(?:\s|=)/, "publish.yml declares no workflow_dispatch inputs");
 }
 
 test("merging code cannot directly or indirectly trigger npm publish or release", () => {
@@ -23,6 +28,8 @@ test("merging code cannot directly or indirectly trigger npm publish or release"
     releaseWorkflow.replace("  workflow_dispatch:", "  push:\n    branches: [main]\n  workflow_dispatch:"), publishWorkflow));
   assert.throws(() => assertNoMergeTriggeredRelease(
     releaseWorkflow, publishWorkflow.replace("    tags:", "    branches: [main]\n    tags:")));
+  assert.throws(() => assertNoMergeTriggeredRelease(
+    releaseWorkflow.replace('--ref "$RELEASE_TAG"', '--ref "$RELEASE_TAG" -f ref="$RELEASE_TAG"'), publishWorkflow));
 });
 
 test("manual release rejects malformed SemVer without leading zeros", () => {

@@ -47,37 +47,54 @@ test("Pi SDK smoke requires every second-host reload assertion and clean process
     responses: [],
     exit_code: 0,
     fullOutput: "",
+    firstReloadResponses: [commandResponse],
     reloadResponses: [commandResponse, promptResponse, modeNotification],
     reloadExitCodes: [0],
     reloadOutput: "",
   });
   assert.deepEqual(reload.map((item) => item.id), [
+    "first_reload_host_registered",
     "reloaded_extension_registered",
     "reloaded_feature_response",
     "clean_shutdown",
   ]);
   assert.equal(reload.every((item) => item.passed), true);
 
+  const missingFirstRegistration = behaviorAssertions("reload_cleanup", {
+    responses: [],
+    exit_code: 0,
+    fullOutput: "",
+    firstReloadResponses: [],
+    reloadResponses: [commandResponse, promptResponse, modeNotification],
+    reloadExitCodes: [0],
+    reloadOutput: "",
+  });
+  assert.equal(missingFirstRegistration[0].passed, false);
+  assert.equal(missingFirstRegistration.slice(1).every((item) => item.passed), true);
+
   const missingSecondFeature = behaviorAssertions("reload_cleanup", {
     responses: [],
     exit_code: 0,
     fullOutput: "",
+    firstReloadResponses: [commandResponse],
     reloadResponses: [commandResponse],
     reloadExitCodes: [0],
     reloadOutput: "",
   });
   assert.equal(missingSecondFeature[0].passed, true);
-  assert.equal(missingSecondFeature[1].passed, false);
+  assert.equal(missingSecondFeature[1].passed, true);
+  assert.equal(missingSecondFeature[2].passed, false);
 
   const failedShutdown = behaviorAssertions("reload_cleanup", {
     responses: [],
     exit_code: 0,
     fullOutput: "shutdown error",
+    firstReloadResponses: [commandResponse],
     reloadResponses: [commandResponse, promptResponse, modeNotification],
     reloadExitCodes: [1],
     reloadOutput: "",
   });
-  assert.equal(failedShutdown[2].passed, false);
+  assert.equal(failedShutdown[3].passed, false);
 });
 
 test("Pi SDK smoke validates exact native-shell version output", () => {

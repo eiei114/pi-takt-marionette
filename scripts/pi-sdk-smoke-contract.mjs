@@ -51,6 +51,7 @@ export function behaviorAssertions(name, {
   exit_code,
   fullOutput,
   expectedVersion,
+  firstReloadResponses = [],
   reloadResponses = [],
   reloadExitCodes = [],
   reloadOutput = "",
@@ -87,6 +88,7 @@ export function behaviorAssertions(name, {
   }
 
   if (name === "reload_cleanup") {
+    const firstHostCommands = getCommandsResponse(firstReloadResponses);
     const commands = getCommandsResponse(reloadResponses);
     const prompt = getFeatureResponse(reloadResponses);
     const notification = getModeNotification(reloadResponses);
@@ -94,6 +96,12 @@ export function behaviorAssertions(name, {
       && prompt.data?.disposition === "handled"
       && notification !== undefined;
     return [
+      assertion(
+        "first_reload_host_registered",
+        "The first actual Pi host in the reload sequence registers /takt:mode before shutdown",
+        firstHostCommands?.data?.commands?.find((command) => command.name === "takt:mode") ?? null,
+        hasBridgeModeCommand(firstReloadResponses),
+      ),
       assertion(
         "reloaded_extension_registered",
         "A second actual Pi host after the first host's shutdown registers /takt:mode",

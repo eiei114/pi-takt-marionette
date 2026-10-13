@@ -169,6 +169,7 @@ try {
       ...secondReloadHost,
       exit_code: firstReloadHost.exit_code,
       fullOutput: reloadOutput,
+      firstReloadResponses: firstReloadHost.responses,
       reloadResponses: secondReloadHost.responses,
       reloadExitCodes: [secondReloadHost.exit_code],
       reloadOutput,
@@ -239,7 +240,9 @@ try {
     unhandled_errors: cases.filter((item) => item._unhandledError).length,
     extension_load_errors: cases.filter((item) => item._extensionLoadError
       || item.assertions.some((assertion) =>
-        (assertion.id === "extension_registered" || assertion.id === "reloaded_extension_registered")
+        (assertion.id === "extension_registered"
+          || assertion.id === "first_reload_host_registered"
+          || assertion.id === "reloaded_extension_registered")
         && !assertion.passed)).length,
     cases: cases.map(({ _unhandledError, _extensionLoadError, ...item }) => item),
   };
