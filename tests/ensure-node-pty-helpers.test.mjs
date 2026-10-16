@@ -18,23 +18,17 @@ test("ensure-node-pty-helpers makes spawn-helper executable", () => {
   writeFileSync(helperPath, "#!/bin/sh\necho ok\n", "utf8");
   chmodSync(helperPath, 0o644);
 
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /chmod \+x on 1 spawn-helper/);
+  const result = ensureNodePtyHelpers({ cwd: root, packageRoot: root });
+  assert.equal(result.fixed, 1);
+  assert.equal(result.helperPaths.length, 1);
   assert.doesNotThrow(() => accessSync(helperPath, constants.X_OK));
 });
 
 test("ensure-node-pty-helpers no-ops when node-pty is absent", () => {
   const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-pty-helper-missing-"));
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: root,
-    encoding: "utf8",
-  });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(result.stdout, "");
+  const result = ensureNodePtyHelpers({ cwd: root, packageRoot: root });
+  assert.equal(result.fixed, 0);
+  assert.deepEqual(result.helperPaths, []);
 });
 
 test("helper discovery follows a hoisted node-pty when the vault is the cwd", () => {
@@ -56,7 +50,7 @@ test("helper discovery follows a hoisted node-pty when the vault is the cwd", ()
   const vaultRoot = join(root, "vault");
   mkdirSync(vaultRoot);
   const roots = findNodePtyPrebuilds({ cwd: vaultRoot, packageRoot });
-  assert.ok(roots.some((candidate) => candidate.endsWith("node_modules/node-pty/prebuilds")));
+  assert.ok(roots.includes(join(nodePtyRoot, "prebuilds")));
 
   const result = ensureNodePtyHelpers({ cwd: vaultRoot, packageRoot });
   assert.equal(result.fixed, 1);
