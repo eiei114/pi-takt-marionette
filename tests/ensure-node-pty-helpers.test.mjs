@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, accessSync, constants } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, accessSync, constants, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -50,7 +50,8 @@ test("helper discovery follows a hoisted node-pty when the vault is the cwd", ()
   const vaultRoot = join(root, "vault");
   mkdirSync(vaultRoot);
   const roots = findNodePtyPrebuilds({ cwd: vaultRoot, packageRoot });
-  assert.ok(roots.includes(join(nodePtyRoot, "prebuilds")));
+  const expectedPrebuilds = realpathSync(join(nodePtyRoot, "prebuilds"));
+  assert.ok(roots.some((candidate) => realpathSync(candidate) === expectedPrebuilds));
 
   const result = ensureNodePtyHelpers({ cwd: vaultRoot, packageRoot });
   assert.equal(result.fixed, 1);
