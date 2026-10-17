@@ -27,15 +27,14 @@ Before opening a PR:
 
 ## Release
 
-Release `pi-takt-marionette` by bumping `version` in `package.json` and
-`package-lock.json` in the PR that prepares the release:
+Release and npm publication are disabled until a trusted external authorization
+boundary for those privileged actions is configured and verified. The current
+repository has no protected release environment or release ruleset, so the
+branch-controlled workflow conditions are not sufficient authorization.
 
-```bash
-npm version <patch|minor|major> --no-git-tag-version
-```
-
-Add the matching `CHANGELOG.md` section, then merge. A `package.json` version
-change on `main` creates the `vX.Y.Z` tag and publishes through npm Trusted
-Publishing; do not add long-lived npm tokens to GitHub Secrets. See
-`docs/release.md` for the full flow, the manual tag path, and Trusted
-Publisher settings.
+Do not create or push a `vX.Y.Z` tag expecting it to publish the package. This
+repository currently has no automated or manual release path. An owner must
+establish and verify the required GitHub protection outside this repository
+before restoring any release or publication workflow. This repository does not
+configure credentials, permissions, environments, or approval rules. See
+[`docs/release.md`](docs/release.md) for the full current policy.

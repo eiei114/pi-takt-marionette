@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.5] - 2026-10-17
+
+### Changed
+
+- Disable privileged release and publication workflows until a trusted external
+  authorization boundary is configured.
+
 ## [0.8.4] - 2026-10-16
 
 ### Changed
