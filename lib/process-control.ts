@@ -100,7 +100,7 @@ export async function killWindowsProcessTree(pid: number): Promise<void> {
 }
 
 function quoteWindowsArg(value: string): string {
-  if (/^[A-Za-z0-9_./\\:-]+$/.test(value)) {
+  if (/^[A-Za-z0-9_./\\:#-]+$/.test(value)) {
     return value;
   }
   return `"${value.replaceAll('"', '\\"')}"`;

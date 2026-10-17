@@ -98,8 +98,8 @@ test("Pi SDK smoke requires every second-host reload assertion and clean process
 });
 
 test("Pi SDK smoke validates exact native-shell version output", () => {
-  const valid = behaviorAssertions("host_shell", { exit_code: 0, fullOutput: "1.1.0\n", expectedVersion: "1.1.0" });
-  const missingOutput = behaviorAssertions("host_shell", { exit_code: 0, fullOutput: "", expectedVersion: "1.1.0" });
+  const valid = behaviorAssertions("host_shell", { exit_code: 0, fullOutput: "1.2.0\n", expectedVersion: "1.2.0" });
+  const missingOutput = behaviorAssertions("host_shell", { exit_code: 0, fullOutput: "", expectedVersion: "1.2.0" });
   assert.equal(valid[0].passed, true);
   assert.equal(missingOutput[0].passed, false);
 });

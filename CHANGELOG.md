@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4] - 2026-10-16
+
+### Changed
+
+- Pin the Pi SDK dev/test packages to 1.2.0 while retaining the published peer
+  ranges, and verify the actual Pi host and native shell against those pins.
+
 ## [0.8.3] - 2026-10-12
 
 ### Changed
