@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, accessSync, constants, realpathSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, accessSync, constants, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -29,6 +29,49 @@ test("ensure-node-pty-helpers no-ops when node-pty is absent", () => {
   const result = ensureNodePtyHelpers({ cwd: root, packageRoot: root });
   assert.equal(result.fixed, 0);
   assert.deepEqual(result.helperPaths, []);
+});
+
+test("ensure-node-pty-helpers CLI repairs a fixture helper from the default cwd", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-bridge-pty-helper-cli-"));
+  const baselineRoot = join(root, "baseline");
+  const fixtureRoot = join(root, "fixture");
+  const helperDir = join(fixtureRoot, "node_modules", "node-pty", "prebuilds", `${process.platform}-${process.arch}`);
+  mkdirSync(baselineRoot, { recursive: true });
+  mkdirSync(helperDir, { recursive: true });
+  const helperPath = join(helperDir, "spawn-helper");
+  writeFileSync(helperPath, "#!/bin/sh\necho ok\n", "utf8");
+  chmodSync(helperPath, 0o644);
+
+  try {
+    const runFrom = (cwd) => spawnSync(process.execPath, [scriptPath], {
+      cwd,
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const fixedCount = (stdout) => {
+      const output = stdout.match(/^ensure-node-pty-helpers: chmod \+x on (\d+) spawn-helper file\(s\)\r?\n?$/);
+      assert.ok(output, `unexpected CLI output: ${stdout}`);
+      return Number(output[1]);
+    };
+
+    const baseline = runFrom(baselineRoot);
+    assert.ifError(baseline.error);
+    assert.equal(baseline.status, 0, baseline.stderr || baseline.stdout);
+    assert.equal(baseline.stderr, "");
+    const baselineFixed = baseline.stdout === "" ? 0 : fixedCount(baseline.stdout);
+
+    const result = runFrom(fixtureRoot);
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.stderr, "");
+    assert.equal(fixedCount(result.stdout), baselineFixed + 1);
+    if (process.platform !== "win32") {
+      assert.equal(statSync(helperPath).mode & 0o111, 0o111);
+    }
+    assert.doesNotThrow(() => accessSync(helperPath, constants.X_OK));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("helper discovery follows a hoisted node-pty when the vault is the cwd", () => {
