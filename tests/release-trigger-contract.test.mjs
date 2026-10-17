@@ -29,3 +29,24 @@ test("publication contract rejects manual dispatch and privileged publisher sign
     { path: "publish.yml", content: "run: npm publish --access public\n" },
   ]), /npm publication/);
 });
+
+test("publication contract rejects compact workflow dispatch, permissions, and release actions", () => {
+  const compactWorkflow = `on: workflow_dispatch
+permissions: { contents: write }
+jobs: { publish: { steps: [{ uses: softprops/action-gh-release@v3 }] } }`;
+  assert.throws(() => assertNoPrivilegedPublicationWorkflows([
+    { path: "compact-publish.yml", content: compactWorkflow },
+  ]), /manual workflow dispatch/);
+  assert.throws(() => assertNoPrivilegedPublicationWorkflows([
+    { path: "compact-permissions.yml", content: "permissions: { contents: write }" },
+  ]), /write-capable workflow token/);
+  assert.throws(() => assertNoPrivilegedPublicationWorkflows([
+    { path: "compact-action.yml", content: "jobs: { publish: { steps: [{ uses: softprops/action-gh-release@v3 }] } }" },
+  ]), /GitHub release-publishing action/);
+  assert.throws(() => assertNoPrivilegedPublicationWorkflows([
+    { path: "compact-job-permissions.yml", content: "jobs: { publish: { permissions: { contents: write } } }" },
+  ]), /write-capable workflow token/);
+  assert.throws(() => assertNoPrivilegedPublicationWorkflows([
+    { path: "write-all.yml", content: "permissions: write-all" },
+  ]), /write-capable workflow token/);
+});
