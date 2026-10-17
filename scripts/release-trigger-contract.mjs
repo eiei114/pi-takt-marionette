@@ -2,6 +2,7 @@ import { parse } from "yaml";
 
 const blockedPatterns = [
   ["npm publication", /\bnpm\s+publish\b/i],
+  ["semantic-release publisher", /\bsemantic-release\b/i],
   ["GitHub release creation", /\bgh\s+release\s+create\b/i],
   ["tag creation", /\bgit\s+tag\b/i],
   ["workflow dispatch", /\bgh\s+workflow\s+run\b/i],

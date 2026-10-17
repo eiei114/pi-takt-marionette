@@ -50,3 +50,21 @@ jobs: { publish: { steps: [{ uses: softprops/action-gh-release@v3 }] } }`;
     { path: "write-all.yml", content: "permissions: write-all" },
   ]), /write-capable workflow token/);
 });
+
+test("publication contract rejects semantic-release in a push-triggered workflow", () => {
+  assert.throws(() => assertNoPrivilegedPublicationWorkflows([
+    {
+      path: "publish.yml",
+      content: `name: Publish
+on:
+  push:
+    branches: [main]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx semantic-release
+`,
+    },
+  ]), /semantic-release publisher/);
+});
