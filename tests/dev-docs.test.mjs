@@ -23,6 +23,20 @@ test("CONTRIBUTING and PR template agree on local Pi testing", () => {
   assert.match(prTemplate, /pi -e \./);
 });
 
+test("CONTRIBUTING release guidance matches the disabled release policy", () => {
+  const contributing = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
+  const release = readFileSync(join(repoRoot, "docs", "release.md"), "utf8");
+
+  for (const document of [contributing, release]) {
+    assert.match(document, /trusted external authorization\s+boundary/);
+    assert.match(document, /no automated or manual release path/);
+    assert.match(document, /before restoring any release or publication workflow/);
+  }
+
+  assert.doesNotMatch(contributing, /version change on `main` creates the `vX\.Y\.Z` tag/);
+  assert.doesNotMatch(contributing, /publishes through npm Trusted Publishing/);
+});
+
 test("runner skill project-setup example matches current package naming", () => {
   const runner = readFileSync(join(repoRoot, "skills", "takt-pi-runner", "SKILL.md"), "utf8");
   const usage = readFileSync(join(repoRoot, "docs", "usage.md"), "utf8");
