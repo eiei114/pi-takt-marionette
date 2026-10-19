@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.6] - 2026-10-20
+
+### Changed
+
+- Direct README users to GitHub for the current repository version because the
+  separately released npm package may lag behind.
+
 ## [0.8.5] - 2026-10-17
 
 ### Changed
