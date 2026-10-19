@@ -52,10 +52,13 @@ started outside Marionette remain metadata-only.
 
 ## Install
 
-```text
-pi install npm:pi-takt-marionette
+Install from GitHub to get the version and commands documented here:
+
+```sh
 pi install git:github.com/eiei114/pi-takt-marionette
 ```
+
+The npm package is released separately and may lag behind the repository.
 
 For local development, load the package root so Pi picks up bundled extensions
 and skills from `package.json`:

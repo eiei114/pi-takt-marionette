@@ -6,6 +6,15 @@ import test from "node:test";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+test("README install example targets the current GitHub source", () => {
+  const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+  const installSection = readme.match(/## Install\n([\s\S]*?)(?=\n## )/)?.[1] ?? "";
+
+  assert.match(installSection, /pi install git:github\.com\/eiei114\/pi-takt-marionette/);
+  assert.match(installSection, /npm package[\s\S]*may lag behind the repository/i);
+  assert.doesNotMatch(installSection, /pi install npm:/);
+});
+
 test("README recommends package-root local dev load", () => {
   const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
   assert.match(readme, /npm ci[\s\S]*pi -e \./, "local dev should install dependencies before loading the package root");
