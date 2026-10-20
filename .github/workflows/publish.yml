@@ -54,6 +54,13 @@ jobs:
             echo "No dependencies to install."
           fi
 
+      # node-pty ships spawn-helper as 0644; without +x the PTY broker cannot
+      # start and the lifecycle tests fail with an ENOENT on the descriptor.
+      # ci.yml runs this too; the publish job must match it before running `ci`.
+      - name: Prepare PTY helpers
+        shell: bash
+        run: node scripts/ensure-node-pty-helpers.mjs
+
       - name: Validate package
         shell: bash
         run: |

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.8] - 2026-10-20
+
+### Fixed
+
+- Run the node-pty helper preparation in `publish.yml` before validation, matching
+  `ci.yml`. Without the `spawn-helper` chmod the PTY broker cannot start and the
+  lifecycle tests fail with an ENOENT on the broker descriptor, which blocked the
+  first publish attempt for 0.8.7.
+
 ## [0.8.7] - 2026-10-20
 
 ### Added
