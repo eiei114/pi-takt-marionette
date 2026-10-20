@@ -27,14 +27,17 @@ Before opening a PR:
 
 ## Release
 
-Release and npm publication are disabled until a trusted external authorization
-boundary for those privileged actions is configured and verified. The current
-repository has no protected release environment or release ruleset, so the
-branch-controlled workflow conditions are not sufficient authorization.
+Merging a version bump does not publish. Releases are an explicit authorized
+action, gated by three independent barriers:
 
-Do not create or push a `vX.Y.Z` tag expecting it to publish the package. This
-repository currently has no automated or manual release path. An owner must
-establish and verify the required GitHub protection outside this repository
-before restoring any release or publication workflow. This repository does not
-configure credentials, permissions, environments, or approval rules. See
-[`docs/release.md`](docs/release.md) for the full current policy.
+1. `auto-release.yml` is `workflow_dispatch` only; it has no `push` trigger.
+2. The release job runs in the protected `release` environment, whose deployment
+   branch policy allows only `main`.
+3. The dispatch requires `release_authorized=true`.
+
+```bash
+gh workflow run auto-release.yml --ref main -f release_authorized=true
+```
+
+`tests/release-trigger-contract.test.mjs` enforces this shape and fails if any
+barrier is removed. See [`docs/release.md`](docs/release.md) for the full policy.
