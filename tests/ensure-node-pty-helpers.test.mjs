@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, accessSync, constants, realpathSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, accessSync, constants, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -121,4 +121,12 @@ test("repo node-pty spawn-helper is executable after ensure script", () => {
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.doesNotThrow(() => accessSync(helperPath, constants.X_OK));
+});
+
+test("package.json allows the pinned node-pty install script", () => {
+  const manifest = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+  const locked = JSON.parse(readFileSync(join(repoRoot, "package-lock.json"), "utf8"));
+  const lockedVersion = locked.packages?.["node_modules/node-pty"]?.version;
+  assert.equal(lockedVersion, "1.1.0");
+  assert.equal(manifest.allowScripts?.[`node-pty@${lockedVersion}`], true);
 });

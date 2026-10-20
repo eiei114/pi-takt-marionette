@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.9] - 2026-10-20
+
+### Fixed
+
+- Allow the pinned `node-pty@1.1.0` install script. `publish.yml` upgrades to
+  `npm@latest`, and npm 12 skips install scripts that are not listed in
+  `allowScripts`. The native binding never builds, the PTY broker exits before
+  writing its descriptor, and publish validation fails with ENOENT under
+  `/tmp/.pm-*`.
+
 ## [0.8.8] - 2026-10-20
 
 ### Fixed
