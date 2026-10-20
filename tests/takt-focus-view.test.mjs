@@ -237,6 +237,28 @@ test("refresh tick detects runner exit without an output event", async () => {
   assert.equal(recorded.exits[0].reason, "runner-ended");
 });
 
+test("refresh ticks avoid idle renders when sessions publish screen changes", async () => {
+  const session = createFakeSession({});
+  const { view, recorded } = createView([session], { refreshIntervalMs: 20 });
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    assert.equal(recorded.renders, 0);
+  } finally {
+    view.close("external-close");
+  }
+
+  const fallbackSession = createFakeSession({});
+  delete fallbackSession.subscribe;
+  const fallback = createView([fallbackSession], { refreshIntervalMs: 20 });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    assert.ok(fallback.recorded.renders > 0);
+  } finally {
+    fallback.view.close("external-close");
+  }
+});
+
 test("live output requests renders through the subscription", () => {
   const session = createFakeSession({});
   const { view, recorded } = createView([session]);

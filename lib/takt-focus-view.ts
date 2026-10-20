@@ -123,6 +123,7 @@ export class TaktFullscreenFocusView {
   private readonly sessions: TaktFocusSession[];
   private readonly callbacks: TaktFocusViewCallbacks;
   private readonly unsubscribes: Array<() => void> = [];
+  private readonly needsRefreshRender: boolean;
   private readonly refreshTimer: ReturnType<typeof setInterval>;
   private readonly keyboard = createTaktKeyboardAdapter();
   private lastColumns = 0;
@@ -132,6 +133,7 @@ export class TaktFullscreenFocusView {
 
   constructor(options: TaktFocusViewOptions) {
     this.sessions = orderTaktFocusSessions(options.sessions);
+    this.needsRefreshRender = this.sessions.some((session) => session.subscribe === undefined);
     this.initialHighlightId = options.initialSessionId;
     if (this.sessions.length === 0) {
       throw new Error("TAKT focus requires at least one eligible running session");
@@ -192,7 +194,9 @@ export class TaktFullscreenFocusView {
     if (!this.checkPinnedAlive()) {
       return;
     }
-    this.callbacks.requestRender();
+    if (this.needsRefreshRender) {
+      this.callbacks.requestRender();
+    }
   }
 
   /**
