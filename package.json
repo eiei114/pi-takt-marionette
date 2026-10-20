@@ -1,6 +1,6 @@
 {
   "name": "pi-takt-marionette",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "description": "Run and monitor TAKT projects in stacked live terminal widgets inside Pi.",
   "type": "module",
   "license": "MIT",
@@ -57,6 +57,9 @@
     "@xterm/headless": "^6.0.0",
     "node-pty": "^1.1.0",
     "yaml": "^2.9.0"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
