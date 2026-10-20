@@ -32,18 +32,18 @@ test("CONTRIBUTING and PR template agree on local Pi testing", () => {
   assert.match(prTemplate, /pi -e \./);
 });
 
-test("CONTRIBUTING release guidance matches the disabled release policy", () => {
+test("CONTRIBUTING release guidance matches the protected release policy", () => {
   const contributing = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
   const release = readFileSync(join(repoRoot, "docs", "release.md"), "utf8");
 
   for (const document of [contributing, release]) {
-    assert.match(document, /trusted external authorization\s+boundary/);
-    assert.match(document, /no automated or manual release path/);
-    assert.match(document, /before restoring any release or publication workflow/);
+    assert.match(document, /workflow_dispatch|dispatch/i);
+    assert.match(document, /release_authorized/);
+    assert.match(document, /release[`\s]+environment/i);
   }
 
-  assert.doesNotMatch(contributing, /version change on `main` creates the `vX\.Y\.Z` tag/);
-  assert.doesNotMatch(contributing, /publishes through npm Trusted Publishing/);
+  assert.doesNotMatch(contributing, /no automated or manual release path/);
+  assert.doesNotMatch(release, /no automated or manual release path/);
 });
 
 test("runner skill project-setup example matches current package naming", () => {

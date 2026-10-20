@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.7] - 2026-10-20
+
+### Added
+
+- Restore the release path with three independent authorization barriers: a
+  dispatch-only trigger, the protected `release` environment restricted to
+  `main`, and a required `release_authorized` input. The environment supplies
+  the boundary that a branch-editable `github.ref` condition cannot.
+
+### Changed
+
+- `scripts/release-trigger-contract.mjs` now enforces this protected shape instead
+  of rejecting every privileged workflow. Each barrier has a negative case in
+  `tests/release-trigger-contract.test.mjs`, so removing one fails CI.
+
 ## [0.8.6] - 2026-10-20
 
 ### Changed
