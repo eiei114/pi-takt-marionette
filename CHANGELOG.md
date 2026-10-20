@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.10] - 2026-10-21
+
+### Changed
+
+- Avoid redundant idle fullscreen-focus renders when sessions publish screen
+  changes; retain polling renders for sessions without a screen subscription.
+
 ## [0.8.9] - 2026-10-20
 
 ### Fixed
