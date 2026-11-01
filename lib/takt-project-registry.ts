@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { configRoot } from "./takt-config-path.ts";
+import { loadJsonRegistryEntries, saveJsonRegistryEntries } from "./takt-json-registry.ts";
 
 const REGISTRY_FILE = "projects.json";
 
@@ -39,15 +40,9 @@ export function defaultProjectRegistryPath(env: NodeJS.ProcessEnv = process.env)
 }
 
 export function loadProjectPaths(filePath = defaultProjectRegistryPath()): string[] {
-  if (!existsSync(filePath)) {
-    return [];
-  }
   try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
-    if (!isRecord(parsed) || !Array.isArray(parsed.projects)) {
-      return [];
-    }
-    return dedupeProjectPaths(parsed.projects.filter((value): value is string => typeof value === "string"))
+    return dedupeProjectPaths(loadJsonRegistryEntries(filePath, "projects")
+      .filter((value): value is string => typeof value === "string"))
       .filter((projectPath) => existsSync(projectPath));
   } catch {
     return [];
@@ -56,10 +51,5 @@ export function loadProjectPaths(filePath = defaultProjectRegistryPath()): strin
 
 export function saveProjectPaths(paths: readonly string[], filePath = defaultProjectRegistryPath()): void {
   const normalized = dedupeProjectPaths(paths);
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify({ version: 1, projects: normalized }, null, 2)}\n`, "utf8");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  saveJsonRegistryEntries(filePath, "projects", normalized);
 }
