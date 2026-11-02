@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.11] - 2026-11-02
+
+### Changed
+
+- Share JSON persistence between the project and profile registries.
+
 ## [0.8.10] - 2026-10-21
 
 ### Changed

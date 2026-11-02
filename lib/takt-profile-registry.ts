@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { configRoot } from "./takt-config-path.ts";
+import { loadJsonRegistryEntries, saveJsonRegistryEntries } from "./takt-json-registry.ts";
 import { normalizeProjectPath } from "./takt-project-registry.ts";
 
 const PROFILE_FILE = "profiles.json";
@@ -26,40 +26,28 @@ export function defaultProfileRegistryPath(env: NodeJS.ProcessEnv = process.env)
 }
 
 export function loadTaktProfiles(filePath = defaultProfileRegistryPath()): TaktProjectProfile[] {
-  if (!existsSync(filePath)) {
-    return [];
-  }
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
-    if (!isRecord(parsed) || !Array.isArray(parsed.profiles)) {
-      return [];
+  const profiles: TaktProjectProfile[] = [];
+  const seen = new Set<string>();
+  for (const value of loadJsonRegistryEntries(filePath, "profiles")) {
+    if (!isRecord(value) || typeof value.name !== "string" || typeof value.cwd !== "string") {
+      continue;
     }
-
-    const profiles: TaktProjectProfile[] = [];
-    const seen = new Set<string>();
-    for (const value of parsed.profiles) {
-      if (!isRecord(value) || typeof value.name !== "string" || typeof value.cwd !== "string") {
+    try {
+      const name = normalizeProfileName(value.name);
+      if (seen.has(name)) {
         continue;
       }
-      try {
-        const name = normalizeProfileName(value.name);
-        if (seen.has(name)) {
-          continue;
-        }
-        const cwd = normalizeProjectPath(value.cwd);
-        const preset = typeof value.preset === "string" && value.preset.trim()
-          ? value.preset.trim()
-          : undefined;
-        profiles.push({ name, cwd, ...(preset ? { preset } : {}) });
-        seen.add(name);
-      } catch {
-        // Ignore malformed entries without preventing Pi from starting.
-      }
+      const cwd = normalizeProjectPath(value.cwd);
+      const preset = typeof value.preset === "string" && value.preset.trim()
+        ? value.preset.trim()
+        : undefined;
+      profiles.push({ name, cwd, ...(preset ? { preset } : {}) });
+      seen.add(name);
+    } catch {
+      // Ignore malformed entries without preventing Pi from starting.
     }
-    return profiles;
-  } catch {
-    return [];
   }
+  return profiles;
 }
 
 export function saveTaktProfiles(
@@ -79,8 +67,7 @@ export function saveTaktProfiles(
     seen.add(name);
   }
 
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify({ version: 1, profiles: normalized }, null, 2)}\n`, "utf8");
+  saveJsonRegistryEntries(filePath, "profiles", normalized);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

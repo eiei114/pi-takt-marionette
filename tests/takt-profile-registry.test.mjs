@@ -41,3 +41,11 @@ test("profile registry skips malformed entries and persists portable JSON", () =
   ]);
   assert.match(readFileSync(file, "utf8"), /valid/);
 });
+
+test("profile registry treats malformed JSON as empty", () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-takt-profile-invalid-"));
+  const file = join(root, "profiles.json");
+  writeFileSync(file, "{", "utf8");
+
+  assert.deepEqual(loadTaktProfiles(file), []);
+});

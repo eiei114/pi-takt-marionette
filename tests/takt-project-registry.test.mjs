@@ -47,3 +47,12 @@ test("project registry ignores folders that were removed after registration", ()
 
   assert.deepEqual(loadProjectPaths(registry), [existing]);
 });
+
+test("project registry treats malformed JSON as empty", () => {
+  const base = mkdtempSync(join(tmpdir(), "pi-takt-bridge-projects-invalid-"));
+  const registry = join(base, "config", "projects.json");
+  mkdirSync(join(base, "config"));
+  writeFileSync(registry, "{", "utf8");
+
+  assert.deepEqual(loadProjectPaths(registry), []);
+});
