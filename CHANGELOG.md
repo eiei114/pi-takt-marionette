@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.12] - 2026-11-03
+
+### Changed
+
+- Make the README local-development quickstart cloneable and runnable from a fresh checkout.
+
 ## [0.8.11] - 2026-11-02
 
 ### Changed

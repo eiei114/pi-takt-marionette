@@ -60,11 +60,12 @@ pi install git:github.com/eiei114/pi-takt-marionette
 
 The npm package is released separately and may lag behind the repository.
 
-For local development, load the package root so Pi picks up bundled extensions
-and skills from `package.json`:
+For local development, clone the repository and load the package root so Pi
+picks up bundled extensions and skills from `package.json`:
 
 ```sh
-cd /path/to/pi-takt-marionette
+git clone https://github.com/eiei114/pi-takt-marionette.git
+cd pi-takt-marionette
 npm ci
 pi -e .
 ```

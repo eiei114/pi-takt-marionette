@@ -17,6 +17,11 @@ test("README install example targets the current GitHub source", () => {
 
 test("README recommends package-root local dev load", () => {
   const readme = readFileSync(join(repoRoot, "README.md"), "utf8");
+  assert.match(
+    readme,
+    /git clone https:\/\/github\.com\/eiei114\/pi-takt-marionette\.git[\s\S]*cd pi-takt-marionette/,
+    "local quickstart should clone the repository before changing directories",
+  );
   assert.match(readme, /npm ci[\s\S]*pi -e \./, "local dev should install dependencies before loading the package root");
   assert.doesNotMatch(
     readme,
