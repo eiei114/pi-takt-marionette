@@ -137,7 +137,10 @@ function createTaktCommand(directory) {
     "  process.on(\"SIGINT\", () => { event(\"signal:workflow\"); process.exit(130); });",
     "  process.stdout.write(\"Starting workflow…\\r\\n\");",
     "  const workflowExitCode = Number(process.env.TEST_WORKFLOW_EXIT_CODE);",
-    "  if (Number.isInteger(workflowExitCode)) setTimeout(() => process.exit(workflowExitCode), 100);",
+    "  if (Number.isInteger(workflowExitCode)) {",
+    "    process.on(\"exit\", (code) => event(`exit:workflow:${code}`));",
+    "    setTimeout(() => process.exit(workflowExitCode), 100);",
+    "  }",
     "} else {",
     "event(`exec:${preset}`);",
     "process.on(\"exit\", (code) => event(`exit:${preset}:${code}`));",
@@ -435,13 +438,21 @@ test("reload reconnect classifies a detached nonzero exit as failed", async () =
       model: "openai-codex/gpt-5.6-luna:max",
     }, firstContext);
     await first.events.get("session_shutdown")?.({ reason: "reload" }, firstContext);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // The PTY must exit while the broker is detached. A fixed sleep raced the
+    // Windows PTY spawn: the fake workflow exits 100ms after its own spawn, and
+    // a loaded runner that spawns late could re-attach before that exit and see
+    // a still-live PTY. Wait for the detached child's own exit record instead.
+    await waitFor(() => logLines(logPath).includes("exit:workflow:7") || undefined, 15_000);
 
     second = loadExtension();
     secondContext = createContext(project);
     await second.events.get("session_start")?.({ reason: "reload" }, secondContext);
-    const after = await invoke(second.tools, "takt_read_screen", { rows: 8 }, secondContext);
-    assert.equal(after.details.ptyRunning, false);
+    // The broker relays the exit asynchronously, so poll the real diagnostic
+    // until the reconnected controller has applied the completed state.
+    const after = await waitFor(async () => {
+      const screen = await invoke(second.tools, "takt_read_screen", { rows: 8 }, secondContext);
+      return screen.details.ptyRunning ? undefined : screen;
+    }, 15_000);
     assert.equal(after.details.stage, "failed");
     assert.equal(after.details.lastExit.code, 7);
   } finally {
