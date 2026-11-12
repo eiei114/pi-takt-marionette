@@ -2,25 +2,26 @@
   "schema_version": 1,
   "verification_contract": "pi-sdk-behavior-v2",
   "sdk_versions": {
-    "@earendil-works/pi-agent-core": "1.5.0",
-    "@earendil-works/pi-ai": "1.5.0",
-    "@earendil-works/pi-coding-agent": "1.5.0",
-    "@earendil-works/pi-tui": "1.5.0"
+    "@earendil-works/pi-agent-core": "1.2.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@earendil-works/pi-tui": "1.2.0"
   },
   "platform": "win32",
   "model_inference": "none; deterministic slash-command feature path in the actual Pi RPC host",
-  "mocked_boundary": "Pi host, extension loader/lifecycle, and /takt:mode feature are real; only provider inference is omitted",
+  "mocked_boundary": "Pi host, extension loader/lifecycle, and /takt:mode feature are real; only provider inference is omitted. The project registry, PTY broker endpoint and TAKT CLI are managed fixtures under a test-owned root.",
+  "environment_isolation": "APPDATA/XDG_CONFIG_HOME, TEMP/TMP/TMPDIR, PI_CODING_AGENT_DIR, TAKT_CONFIG_DIR and TAKT_COMMAND are redirected into a throwaway root; no user-level registry, live broker or TAKT process is read, attached or started.",
   "unhandled_errors": 0,
   "extension_load_errors": 0,
   "cases": [
     {
       "name": "extension_load",
-      "command": "node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --offline --no-session --no-tools --no-extensions -e . --no-skills --no-context-files --no-prompt-templates --no-mcp --mode rpc; stdin JSONL: {\"type\":\"get_commands\"}",
+      "command": "node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --offline --no-session --no-tools --no-extensions -e . --no-skills --no-context-files --no-prompt-templates --no-mcp --mode rpc; stdin JSONL: {\"type\":\"get_commands\"}; env: APPDATA/XDG_CONFIG_HOME, TEMP/TMP/TMPDIR, PI_CODING_AGENT_DIR, TAKT_CONFIG_DIR and TAKT_COMMAND point at a test-owned root",
       "exit_code": 0,
       "passed": true,
       "timeout_ms": 15000,
       "timed_out": false,
-      "evidence": "[validated full output; stored tail of 6000 chars]\nvel\"}},{\"name\":\"takt:session\",\"description\":\"Switch TAKT fullscreen focus to the previous/next running session\",\"source\":\"extension\",\"sourceInfo\":{\"path\":\"<repo>\\\\extensions\\\\index.ts\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"takt:stop\",\"description\":\"Stop a TAKT process started by Pi\",\"source\":\"extension\",\"sourceInfo\":{\"path\":\"<repo>\\\\extensions\\\\index.ts\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-intake\",\"description\":\"Resolve the exact TAKT target, intent, and execution constraints before any setup, planning, queueing, or run. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator, not as a generic TAKT front door.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-intake\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-model-preflight\",\"description\":\"Validate the two-layer TAKT/Pi provider and model route before starting or resuming a workflow, including old global TAKT thinking-level syntax and embedded model-catalog checks.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-model-preflight\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-next-step\",\"description\":\"Choose the next concrete action in a TAKT project and route into the correct built-in workflow. Use when the user asks what to do next, where the TAKT task stands, how to continue, what remains, or wants an ask-matt-style flow guide after setup, planning, queueing, running, or recovery.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-next-step\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-orchestrator\",\"description\":\"Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, recovery, or next-step navigation, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, recovering a TAKT task, or asks what to do next. Do not start task execution or queue work before intent and target are clear.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-orchestrator\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-project-setup\",\"description\":\"Prepare an exact TAKT project before workflow selection or task planning: create local .takt scaffolding, copy one safe preset, and register the named profile. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-project-setup\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-queue-gate\",\"description\":\"Finish TAKT preflight by showing the final task body, obtaining enqueue confirmation, and verifying the directly persisted TAKT workflow before execution. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-queue-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-run-gate\",\"description\":\"Hold the final explicit execution gate after TAKT preflight: verify pending work and ask whether to run all queued tasks. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-run-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-runner\",\"description\":\"Execute finalized issue and development tasks through TAKT using Pi-only agents, a named project profile, and the Pi stacked raw-output widget. Use after takt-pi-orchestrator routes an execution or recovery request, or when the user explicitly invokes takt-pi-runner. Do not trigger as the front door for generic TAKT requests or vague setup/planning; route those through takt-pi-orchestrator first.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-runner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-task-planner\",\"description\":\"Turn a vague request into one concrete TAKT pending task through a Pi-side planning conversation, then persist it directly without starting execution. Use after takt-pi-orchestrator routes a queue request or when the user explicitly invokes takt-pi-task-planner. Do not trigger as the front door for generic TAKT requests and do not use for immediate execution; use takt-pi-runner instead.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-task-planner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-workflow-selection\",\"description\":\"Select and lock the exact standalone TAKT workflow during preflight using the effective project > user-global > builtin catalog. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-workflow-selection\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:to-takt-tasks\",\"description\":\"Turn one explicit PRD into child tickets and queue them as one ordered aggregate TAKT task on one spec branch. Use when a user wants the grill → spec → TAKT queue flow, asks to stack implementation work in TAKT, or wants a PRD converted into a bridge-owned task.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\to-takt-tasks\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}}]}}\n{\"type\":\"extension_ui_request\",\"id\":\"8b9564e3-2ef7-471c-a25f-cbada8ef922e\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"6228f1dd-20a1-48c6-9b40-369d3fb96561\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
+      "evidence": "[validated full output; stored tail of 6000 chars]\nvel\"}},{\"name\":\"takt:session\",\"description\":\"Switch TAKT fullscreen focus to the previous/next running session\",\"source\":\"extension\",\"sourceInfo\":{\"path\":\"<repo>\\\\extensions\\\\index.ts\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"takt:stop\",\"description\":\"Stop a TAKT process started by Pi\",\"source\":\"extension\",\"sourceInfo\":{\"path\":\"<repo>\\\\extensions\\\\index.ts\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-intake\",\"description\":\"Resolve the exact TAKT target, intent, and execution constraints before any setup, planning, queueing, or run. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator, not as a generic TAKT front door.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-intake\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-model-preflight\",\"description\":\"Validate the two-layer TAKT/Pi provider and model route before starting or resuming a workflow, including old global TAKT thinking-level syntax and embedded model-catalog checks.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-model-preflight\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-next-step\",\"description\":\"Choose the next concrete action in a TAKT project and route into the correct built-in workflow. Use when the user asks what to do next, where the TAKT task stands, how to continue, what remains, or wants an ask-matt-style flow guide after setup, planning, queueing, running, or recovery.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-next-step\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-orchestrator\",\"description\":\"Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, recovery, or next-step navigation, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, recovering a TAKT task, or asks what to do next. Do not start task execution or queue work before intent and target are clear.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-orchestrator\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-project-setup\",\"description\":\"Prepare an exact TAKT project before workflow selection or task planning: create local .takt scaffolding, copy one safe preset, and register the named profile. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-project-setup\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-queue-gate\",\"description\":\"Finish TAKT preflight by showing the final task body, obtaining enqueue confirmation, and verifying the directly persisted TAKT workflow before execution. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-queue-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-run-gate\",\"description\":\"Hold the final explicit execution gate after TAKT preflight: verify pending work and ask whether to run all queued tasks. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-run-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-runner\",\"description\":\"Execute finalized issue and development tasks through TAKT using Pi-only agents, a named project profile, and the Pi stacked raw-output widget. Use after takt-pi-orchestrator routes an execution or recovery request, or when the user explicitly invokes takt-pi-runner. Do not trigger as the front door for generic TAKT requests or vague setup/planning; route those through takt-pi-orchestrator first.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-runner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-task-planner\",\"description\":\"Turn a vague request into one concrete TAKT pending task through a Pi-side planning conversation, then persist it directly without starting execution. Use after takt-pi-orchestrator routes a queue request or when the user explicitly invokes takt-pi-task-planner. Do not trigger as the front door for generic TAKT requests and do not use for immediate execution; use takt-pi-runner instead.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-task-planner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-workflow-selection\",\"description\":\"Select and lock the exact standalone TAKT workflow during preflight using the effective project > user-global > builtin catalog. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-workflow-selection\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:to-takt-tasks\",\"description\":\"Turn one explicit PRD into child tickets and queue them as one ordered aggregate TAKT task on one spec branch. Use when a user wants the grill → spec → TAKT queue flow, asks to stack implementation work in TAKT, or wants a PRD converted into a bridge-owned task.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\to-takt-tasks\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}}]}}\n{\"type\":\"extension_ui_request\",\"id\":\"628e5eb2-f184-486f-816a-ded73384c5db\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"65096699-5a6b-4b53-aa55-6f3421ec0058\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
       "assertions": [
         {
           "id": "extension_registered",
@@ -37,17 +38,135 @@
             }
           },
           "passed": true
+        },
+        {
+          "id": "smoke_config_isolated",
+          "expected": "The smoke hosts resolve the project registry and PTY endpoint under the test-owned root, while the operator-shaped bait registry and fake endpoint stay unchanged",
+          "observed": {
+            "isolated_endpoint": {
+              "connections": 5,
+              "requests": [
+                "snapshot",
+                "shutdown",
+                "snapshot",
+                "shutdown",
+                "snapshot",
+                "shutdown",
+                "snapshot",
+                "shutdown",
+                "snapshot",
+                "shutdown"
+              ],
+              "snapshot_requests": 5,
+              "stop_requests": 0,
+              "shutdown_requests": 5,
+              "sessionRunning": false
+            },
+            "bait_endpoint": {
+              "connections": 0,
+              "requests": [],
+              "snapshot_requests": 0,
+              "stop_requests": 0,
+              "shutdown_requests": 0,
+              "sessionRunning": true
+            },
+            "bait_registry_fingerprint": {
+              "before": "3d5eec5ec01f618995ef35c07cf3af92beac77e5323b2c936af381f6f1e6e64b",
+              "after": "3d5eec5ec01f618995ef35c07cf3af92beac77e5323b2c936af381f6f1e6e64b"
+            }
+          },
+          "passed": true
+        },
+        {
+          "id": "child_process_env_isolated",
+          "expected": "A child process inheriting the smoke environment resolves temp, registry, Pi agent, TAKT config and TAKT command roots inside the test-owned root",
+          "observed": {
+            "tmpdir": "<isolated-root>\\temp",
+            "registryRoot": "<isolated-root>\\config",
+            "taktConfigDir": "<isolated-root>\\takt",
+            "taktCommand": "<isolated-root>\\bin\\fake-takt.cmd",
+            "piAgentDir": "<isolated-root>\\agent"
+          },
+          "passed": true
+        },
+        {
+          "id": "no_mutating_takt_command",
+          "expected": "The isolated smoke never invokes a mutating TAKT command (run, exec, clear, resume, stop)",
+          "observed": {
+            "invocations": [],
+            "mutating": []
+          },
+          "passed": true
+        },
+        {
+          "id": "bait_endpoint_detectable",
+          "expected": "A host run against a non-isolated layout attaches to that layout's fake endpoint and sends it shutdown, proving a lost isolation is detected instead of silently ignored",
+          "observed": {
+            "connections": 1,
+            "requests": [
+              "snapshot",
+              "shutdown"
+            ],
+            "snapshot_requests": 1,
+            "stop_requests": 0,
+            "shutdown_requests": 1,
+            "sessionRunning": false
+          },
+          "passed": true
         }
-      ]
+      ],
+      "isolation_fixture": {
+        "isolated": {
+          "connections": 5,
+          "requests": [
+            "snapshot",
+            "shutdown",
+            "snapshot",
+            "shutdown",
+            "snapshot",
+            "shutdown",
+            "snapshot",
+            "shutdown",
+            "snapshot",
+            "shutdown"
+          ],
+          "snapshot_requests": 5,
+          "stop_requests": 0,
+          "shutdown_requests": 5,
+          "unauthorized": 0,
+          "sessionRunning": false
+        },
+        "bait": {
+          "connections": 0,
+          "requests": [],
+          "snapshot_requests": 0,
+          "stop_requests": 0,
+          "shutdown_requests": 0,
+          "unauthorized": 0,
+          "sessionRunning": true
+        },
+        "control": {
+          "connections": 1,
+          "requests": [
+            "snapshot",
+            "shutdown"
+          ],
+          "snapshot_requests": 1,
+          "stop_requests": 0,
+          "shutdown_requests": 1,
+          "unauthorized": 0,
+          "sessionRunning": false
+        }
+      }
     },
     {
       "name": "happy_path",
-      "command": "node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --offline --no-session --no-tools --no-extensions -e . --no-skills --no-context-files --no-prompt-templates --no-mcp --mode rpc; stdin JSONL: {\"id\":\"feature-1\",\"type\":\"prompt\",\"message\":\"/takt:mode pi\"}",
+      "command": "node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --offline --no-session --no-tools --no-extensions -e . --no-skills --no-context-files --no-prompt-templates --no-mcp --mode rpc; stdin JSONL: {\"id\":\"feature-1\",\"type\":\"prompt\",\"message\":\"/takt:mode pi\"}; env: APPDATA/XDG_CONFIG_HOME, TEMP/TMP/TMPDIR, PI_CODING_AGENT_DIR, TAKT_CONFIG_DIR and TAKT_COMMAND point at a test-owned root",
       "exit_code": 0,
       "passed": true,
       "timeout_ms": 15000,
       "timed_out": false,
-      "evidence": "stdout:\n{\"type\":\"extension_ui_request\",\"id\":\"9ee51d7a-7792-4992-af5b-a470c05579f3\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"9aaac912-5605-4244-acc6-e188bcc03519\",\"method\":\"notify\",\"message\":\"TAKT input mode: pi — Pi editor focus; TAKT input only via /takt:send or tools\",\"notifyType\":\"info\"}\n{\"id\":\"feature-1\",\"type\":\"response\",\"command\":\"prompt\",\"success\":true,\"data\":{\"disposition\":\"handled\"}}\n{\"type\":\"extension_ui_request\",\"id\":\"4e73727e-c004-469b-9199-fe3fae4f702b\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"1a9f7fd3-87a4-4fc2-8101-8b9b945de8ca\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
+      "evidence": "stdout:\n{\"type\":\"extension_ui_request\",\"id\":\"34976742-8029-4dc1-8cc9-e1d8a9946380\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"9ebb2e6e-34fb-4063-8aa7-7b10dd2ff7cd\",\"method\":\"notify\",\"message\":\"TAKT input mode: pi — Pi editor focus; TAKT input only via /takt:send or tools\",\"notifyType\":\"info\"}\n{\"id\":\"feature-1\",\"type\":\"response\",\"command\":\"prompt\",\"success\":true,\"data\":{\"disposition\":\"handled\"}}\n{\"type\":\"extension_ui_request\",\"id\":\"bedc9ec6-5f14-4f3a-84a2-4425f584dbfc\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"0737a6f7-89a2-44b3-a026-de4c1ff944f1\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
       "assertions": [
         {
           "id": "feature_response",
@@ -64,7 +183,7 @@
             },
             "notification": {
               "type": "extension_ui_request",
-              "id": "9aaac912-5605-4244-acc6-e188bcc03519",
+              "id": "9ebb2e6e-34fb-4063-8aa7-7b10dd2ff7cd",
               "method": "notify",
               "message": "TAKT input mode: pi — Pi editor focus; TAKT input only via /takt:send or tools",
               "notifyType": "info"
@@ -76,12 +195,12 @@
     },
     {
       "name": "error_path",
-      "command": "node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --offline --no-session --no-tools --no-extensions -e . --no-skills --no-context-files --no-prompt-templates --no-mcp --mode rpc; stdin JSONL: malformed JSONL: not-json",
+      "command": "node node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --offline --no-session --no-tools --no-extensions -e . --no-skills --no-context-files --no-prompt-templates --no-mcp --mode rpc; stdin JSONL: malformed JSONL: not-json; env: APPDATA/XDG_CONFIG_HOME, TEMP/TMP/TMPDIR, PI_CODING_AGENT_DIR, TAKT_CONFIG_DIR and TAKT_COMMAND point at a test-owned root",
       "exit_code": 0,
       "passed": true,
       "timeout_ms": 15000,
       "timed_out": false,
-      "evidence": "stdout:\n{\"type\":\"response\",\"command\":\"parse\",\"success\":false,\"error\":\"Failed to parse command: Unexpected token 'o', \\\"not-json\\\" is not valid JSON\"}\n{\"type\":\"extension_ui_request\",\"id\":\"9b4d2e8c-bb4c-4230-83c8-077c0479f5d4\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"712317d7-6b30-4bf1-a217-a14c291cc4c7\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
+      "evidence": "stdout:\n{\"type\":\"response\",\"command\":\"parse\",\"success\":false,\"error\":\"Failed to parse command: Unexpected token 'o', \\\"not-json\\\" is not valid JSON\"}\n{\"type\":\"extension_ui_request\",\"id\":\"c32a9a4a-e9a3-4e65-a7e8-7939f9a0a2dd\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"8096f799-1f23-466b-82af-63eb15e7ac7a\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
       "assertions": [
         {
           "id": "handled_error",
@@ -103,7 +222,7 @@
       "passed": true,
       "timeout_ms": 15000,
       "timed_out": false,
-      "evidence": "[validated full output; stored tail of 6000 chars]\nPi\",\"source\":\"extension\",\"sourceInfo\":{\"path\":\"<repo>\\\\extensions\\\\index.ts\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-intake\",\"description\":\"Resolve the exact TAKT target, intent, and execution constraints before any setup, planning, queueing, or run. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator, not as a generic TAKT front door.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-intake\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-model-preflight\",\"description\":\"Validate the two-layer TAKT/Pi provider and model route before starting or resuming a workflow, including old global TAKT thinking-level syntax and embedded model-catalog checks.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-model-preflight\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-next-step\",\"description\":\"Choose the next concrete action in a TAKT project and route into the correct built-in workflow. Use when the user asks what to do next, where the TAKT task stands, how to continue, what remains, or wants an ask-matt-style flow guide after setup, planning, queueing, running, or recovery.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-next-step\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-orchestrator\",\"description\":\"Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, recovery, or next-step navigation, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, recovering a TAKT task, or asks what to do next. Do not start task execution or queue work before intent and target are clear.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-orchestrator\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-project-setup\",\"description\":\"Prepare an exact TAKT project before workflow selection or task planning: create local .takt scaffolding, copy one safe preset, and register the named profile. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-project-setup\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-queue-gate\",\"description\":\"Finish TAKT preflight by showing the final task body, obtaining enqueue confirmation, and verifying the directly persisted TAKT workflow before execution. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-queue-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-run-gate\",\"description\":\"Hold the final explicit execution gate after TAKT preflight: verify pending work and ask whether to run all queued tasks. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-run-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-runner\",\"description\":\"Execute finalized issue and development tasks through TAKT using Pi-only agents, a named project profile, and the Pi stacked raw-output widget. Use after takt-pi-orchestrator routes an execution or recovery request, or when the user explicitly invokes takt-pi-runner. Do not trigger as the front door for generic TAKT requests or vague setup/planning; route those through takt-pi-orchestrator first.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-runner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-task-planner\",\"description\":\"Turn a vague request into one concrete TAKT pending task through a Pi-side planning conversation, then persist it directly without starting execution. Use after takt-pi-orchestrator routes a queue request or when the user explicitly invokes takt-pi-task-planner. Do not trigger as the front door for generic TAKT requests and do not use for immediate execution; use takt-pi-runner instead.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-task-planner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-workflow-selection\",\"description\":\"Select and lock the exact standalone TAKT workflow during preflight using the effective project > user-global > builtin catalog. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-workflow-selection\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:to-takt-tasks\",\"description\":\"Turn one explicit PRD into child tickets and queue them as one ordered aggregate TAKT task on one spec branch. Use when a user wants the grill → spec → TAKT queue flow, asks to stack implementation work in TAKT, or wants a PRD converted into a bridge-owned task.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\to-takt-tasks\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}}]}}\n{\"type\":\"extension_ui_request\",\"id\":\"3cfe2742-331f-40d7-88db-8e2379ef77d8\",\"method\":\"notify\",\"message\":\"TAKT input mode: pi — Pi editor focus; TAKT input only via /takt:send or tools\",\"notifyType\":\"info\"}\n{\"id\":\"feature-1\",\"type\":\"response\",\"command\":\"prompt\",\"success\":true,\"data\":{\"disposition\":\"handled\"}}\n{\"type\":\"extension_ui_request\",\"id\":\"aaa9163f-3137-4240-a8e1-ba5476339e94\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"12675b17-54bf-4735-a357-c8ea06371b78\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
+      "evidence": "[validated full output; stored tail of 6000 chars]\nPi\",\"source\":\"extension\",\"sourceInfo\":{\"path\":\"<repo>\\\\extensions\\\\index.ts\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-intake\",\"description\":\"Resolve the exact TAKT target, intent, and execution constraints before any setup, planning, queueing, or run. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator, not as a generic TAKT front door.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-intake\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-model-preflight\",\"description\":\"Validate the two-layer TAKT/Pi provider and model route before starting or resuming a workflow, including old global TAKT thinking-level syntax and embedded model-catalog checks.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-model-preflight\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-next-step\",\"description\":\"Choose the next concrete action in a TAKT project and route into the correct built-in workflow. Use when the user asks what to do next, where the TAKT task stands, how to continue, what remains, or wants an ask-matt-style flow guide after setup, planning, queueing, running, or recovery.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-next-step\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-orchestrator\",\"description\":\"Act as the front door for TAKT in Pi: resolve the exact target, automatically bootstrap missing project-local TAKT state and profiles, decide whether the request needs task planning, execution, recovery, or next-step navigation, then route to the specialized TAKT Skill. Use whenever the user mentions TAKT, the Pi TAKT bridge, queueing, running, setting up, recovering a TAKT task, or asks what to do next. Do not start task execution or queue work before intent and target are clear.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-orchestrator\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-project-setup\",\"description\":\"Prepare an exact TAKT project before workflow selection or task planning: create local .takt scaffolding, copy one safe preset, and register the named profile. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-project-setup\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-queue-gate\",\"description\":\"Finish TAKT preflight by showing the final task body, obtaining enqueue confirmation, and verifying the directly persisted TAKT workflow before execution. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-queue-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-run-gate\",\"description\":\"Hold the final explicit execution gate after TAKT preflight: verify pending work and ask whether to run all queued tasks. Internal preflight phase; use through takt-pi-next-step or takt-pi-task-planner.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-run-gate\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-runner\",\"description\":\"Execute finalized issue and development tasks through TAKT using Pi-only agents, a named project profile, and the Pi stacked raw-output widget. Use after takt-pi-orchestrator routes an execution or recovery request, or when the user explicitly invokes takt-pi-runner. Do not trigger as the front door for generic TAKT requests or vague setup/planning; route those through takt-pi-orchestrator first.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-runner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-task-planner\",\"description\":\"Turn a vague request into one concrete TAKT pending task through a Pi-side planning conversation, then persist it directly without starting execution. Use after takt-pi-orchestrator routes a queue request or when the user explicitly invokes takt-pi-task-planner. Do not trigger as the front door for generic TAKT requests and do not use for immediate execution; use takt-pi-runner instead.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-task-planner\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:takt-pi-workflow-selection\",\"description\":\"Select and lock the exact standalone TAKT workflow during preflight using the effective project > user-global > builtin catalog. Internal preflight phase; use through takt-pi-next-step or takt-pi-orchestrator.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\takt-pi-workflow-selection\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}},{\"name\":\"skill:to-takt-tasks\",\"description\":\"Turn one explicit PRD into child tickets and queue them as one ordered aggregate TAKT task on one spec branch. Use when a user wants the grill → spec → TAKT queue flow, asks to stack implementation work in TAKT, or wants a PRD converted into a bridge-owned task.\",\"source\":\"skill\",\"sourceInfo\":{\"path\":\"<repo>\\\\skills\\\\to-takt-tasks\\\\SKILL.md\",\"source\":\"cli\",\"scope\":\"temporary\",\"origin\":\"top-level\"}}]}}\n{\"type\":\"extension_ui_request\",\"id\":\"8524c84a-935b-48c8-810a-c5e4b5f476a1\",\"method\":\"notify\",\"message\":\"TAKT input mode: pi — Pi editor focus; TAKT input only via /takt:send or tools\",\"notifyType\":\"info\"}\n{\"id\":\"feature-1\",\"type\":\"response\",\"command\":\"prompt\",\"success\":true,\"data\":{\"disposition\":\"handled\"}}\n{\"type\":\"extension_ui_request\",\"id\":\"c74f52c9-fe7c-4315-a28f-249d95083351\",\"method\":\"setStatus\",\"statusKey\":\"pi-takt-marionette-input-mode\"}\n{\"type\":\"extension_ui_request\",\"id\":\"198533aa-d303-4d98-ad51-3b165762dd41\",\"method\":\"setWidget\",\"widgetKey\":\"pi-takt-marionette-projects\"}\n\nstderr:\n",
       "assertions": [
         {
           "id": "first_reload_host_registered",
@@ -152,7 +271,7 @@
             },
             "notification": {
               "type": "extension_ui_request",
-              "id": "3cfe2742-331f-40d7-88db-8e2379ef77d8",
+              "id": "8524c84a-935b-48c8-810a-c5e4b5f476a1",
               "method": "notify",
               "message": "TAKT input mode: pi — Pi editor focus; TAKT input only via /takt:send or tools",
               "notifyType": "info"
@@ -182,15 +301,15 @@
       "passed": true,
       "timeout_ms": 15000,
       "timed_out": false,
-      "evidence": "1.5.0\n",
+      "evidence": "1.2.0\n",
       "assertions": [
         {
           "id": "native_shell_boundary",
           "expected": "The native host shell launches this checkout's pinned Pi CLI and prints exactly its version",
           "observed": {
             "exit_code": 0,
-            "output": "1.5.0",
-            "expectedVersion": "1.5.0"
+            "output": "1.2.0",
+            "expectedVersion": "1.2.0"
           },
           "passed": true
         }
