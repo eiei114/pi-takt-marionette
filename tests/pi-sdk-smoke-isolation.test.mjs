@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,11 +9,14 @@ import {
   brokerRuntimeDirectory,
   bypassControlAssertion,
   createSmokeIsolation,
+  fakeBrokerSocketName,
+  fakeBrokerSocketPath,
   fileFingerprint,
   isolationAssertions,
   probeChildEnvironment,
   seedProjectRegistry,
   smokeEnvironment,
+  UNIX_SOCKET_PATH_LIMIT_BYTES,
 } from "../scripts/pi-sdk-smoke-isolation.mjs";
 
 function insideRoot(root, value) {
@@ -109,6 +112,74 @@ test("child processes inherit the isolated temp, registry and TAKT roots", () =>
     }
   } finally {
     isolation.cleanup();
+  }
+});
+
+test("fake broker socket path drops the nested broker directory that overflows the Unix socket limit", () => {
+  const token = "1".repeat(64);
+  const socketName = fakeBrokerSocketName("isolated", token);
+  // Hosted macOS runner `TMPDIR` is ~55 bytes, so `tempRoot/.pm-<identity>/
+  // <socket>` reaches 109-122 bytes while a socket directly in `tempRoot`
+  // still fits. Size this test root the same way, whatever `tmpdir()` is.
+  const prefix = join(tmpdir(), "pi-takt-long-");
+  const separator = 1; // the path separator before the name
+  const padLength = UNIX_SOCKET_PATH_LIMIT_BYTES - separator
+    - Buffer.byteLength(prefix) - Buffer.byteLength(socketName);
+  assert.ok(padLength >= 0, "the platform temp root must be short enough to build on");
+  const longTempRoot = `${prefix}${"x".repeat(padLength)}`;
+  const shortBase = mkdtempSync(join(tmpdir(), "pi-takt-short-"));
+  try {
+    mkdirSync(longTempRoot, { recursive: true });
+
+    // Case 1 (the CI failure): the nested broker directory overflows, but the
+    // socket may stay in the run's own temp root once the `.pm-<identity>`
+    // segment and the longer name are gone.
+    const nested = join(longTempRoot, ".pm-1a2b3c", socketName);
+    assert.ok(
+      Buffer.byteLength(nested) > UNIX_SOCKET_PATH_LIMIT_BYTES,
+      `the fixture must exercise a path that is genuinely too long: ${nested} (${Buffer.byteLength(nested)} bytes)`,
+    );
+    const inRoot = fakeBrokerSocketPath(longTempRoot, "isolated", token, {
+      platform: "linux",
+      bases: [longTempRoot, shortBase],
+    });
+    assert.equal(inRoot, join(longTempRoot, socketName));
+    assert.ok(insideRoot(longTempRoot, inRoot));
+    assert.ok(Buffer.byteLength(inRoot) <= UNIX_SOCKET_PATH_LIMIT_BYTES);
+
+    // Case 2: a temp root that cannot hold a socket at all falls back to the
+    // next named base (`/tmp` in production).
+    const tooLongRoot = `${prefix}${"x".repeat(padLength + 8)}`;
+    mkdirSync(tooLongRoot, { recursive: true });
+    const fallback = fakeBrokerSocketPath(tooLongRoot, "isolated", token, {
+      platform: "linux",
+      bases: [tooLongRoot, shortBase],
+    });
+    assert.equal(fallback, join(shortBase, socketName));
+    assert.ok(insideRoot(shortBase, fallback), "the socket must stay inside a named base");
+    assert.ok(Buffer.byteLength(fallback) <= UNIX_SOCKET_PATH_LIMIT_BYTES);
+
+    // Windows keeps the named pipe, and no fallback is needed for a short root.
+    assert.equal(
+      fakeBrokerSocketPath(tooLongRoot, "isolated", token, { platform: "win32", bases: [tooLongRoot, shortBase] }),
+      `\\\\.\\pipe\\pi-takt-smoke-isolated-${token.slice(0, 16)}`,
+    );
+    assert.ok(insideRoot(shortBase, fakeBrokerSocketPath(shortBase, "isolated", token, {
+      platform: "linux",
+      bases: [shortBase],
+    })));
+
+    // Fail closed with the measured length when no base is short enough.
+    const onlyCandidate = join(tooLongRoot, socketName);
+    assert.throws(
+      () => fakeBrokerSocketPath(tooLongRoot, "isolated", token, { platform: "linux", bases: [tooLongRoot] }),
+      (error) => error.message.includes(String(UNIX_SOCKET_PATH_LIMIT_BYTES))
+        && error.message.includes(String(Buffer.byteLength(onlyCandidate))),
+    );
+  } finally {
+    rmSync(shortBase, { recursive: true, force: true });
+    rmSync(longTempRoot, { recursive: true, force: true });
+    rmSync(`${prefix}${"x".repeat(padLength + 8)}`, { recursive: true, force: true });
   }
 });
 

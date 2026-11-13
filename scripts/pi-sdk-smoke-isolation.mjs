@@ -66,6 +66,61 @@ if (argv[0] === "list") {
 const here = dirname(fileURLToPath(import.meta.url));
 export const BROKER_FIXTURE = join(here, "..", "tests", "fixtures", "fake-takt-broker.mjs");
 
+/**
+ * macOS `sockaddr_un.sun_path` is 104 bytes including the NUL terminator, so a
+ * Unix socket path must stay below it (Linux: 108). `server.listen()` fails with
+ * EINVAL beyond the limit.
+ */
+export const UNIX_SOCKET_PATH_LIMIT_BYTES = 103;
+
+/**
+ * Socket file name for one fake endpoint.
+ *
+ * Deliberately short: it is appended to the chosen base, and every byte counts
+ * against the Unix socket path limit.
+ */
+export function fakeBrokerSocketName(label, token) {
+  return `${label.slice(0, 4)}-${token.slice(0, 6)}.s`;
+}
+
+function existingCandidates(bases) {
+  return bases
+    .filter((base) => typeof base === "string" && base.length > 0)
+    .filter((base, index, all) => all.indexOf(base) === index)
+    .filter((base) => existsSync(base));
+}
+
+/**
+ * Socket path for one fake endpoint.
+ *
+ * The descriptor must live in `brokerPaths()`' directory under `tempRoot`, but
+ * the socket cannot when the temp root is already long: a hosted macOS runner
+ * `TMPDIR` is `/var/folders/...` (~55 bytes), so
+ * `tempRoot/.pm-<identity>/<label>-<token>.s` reached 109-113 bytes and the
+ * broker died with EINVAL before publishing its descriptor — the macOS CI
+ * failure this repairs. Prefer the socket inside the run's own `tempRoot`, and
+ * fall back to `/tmp` (Unix only; short and already required by the harness)
+ * when the nested path does not fit. The random token keeps every fallback
+ * socket unique, and both the broker and `close()` unlink it again.
+ */
+export function fakeBrokerSocketPath(tempRoot, label, token, { platform = process.platform, bases } = {}) {
+  const socketName = fakeBrokerSocketName(label, token);
+  if (platform === "win32") {
+    return `\\\\.\\pipe\\pi-takt-smoke-${label}-${token.slice(0, 16)}`;
+  }
+  const candidates = existingCandidates(bases ?? [tempRoot, "/tmp"]);
+  const tried = [];
+  for (const base of candidates) {
+    const candidate = join(base, socketName);
+    tried.push(`${candidate} (${Buffer.byteLength(candidate)} bytes)`);
+    if (Buffer.byteLength(candidate) <= UNIX_SOCKET_PATH_LIMIT_BYTES) return candidate;
+  }
+  throw new Error(
+    `fake TAKT broker ${label} has no socket base short enough for the ${UNIX_SOCKET_PATH_LIMIT_BYTES}-byte Unix socket path limit: `
+    + tried.join(", "),
+  );
+}
+
 /** Stable broker runtime directory, mirroring brokerPaths() in the controller. */
 export function brokerRuntimeDirectory(tempRoot) {
   const identity = typeof process.getuid === "function"
@@ -259,9 +314,7 @@ export async function startFakeBrokerEndpoint({
 }) {
   const token = randomBytes(32).toString("hex");
   mkdirSync(brokerRuntimeDirectory(tempRoot), { recursive: true });
-  const socketPath = process.platform === "win32"
-    ? `\\\\.\\pipe\\pi-takt-smoke-${label}-${token.slice(0, 16)}`
-    : join(brokerRuntimeDirectory(tempRoot), `${label}-${token.slice(0, 8)}.s`);
+  const socketPath = fakeBrokerSocketPath(tempRoot, label, token);
   const descriptorPath = brokerDescriptorPath(tempRoot, projectCwd);
   // The log name carries the random token so repeated runs in the same temp
   // directory never append to an earlier run's evidence.
@@ -293,7 +346,11 @@ export async function startFakeBrokerEndpoint({
   }
   if (exited !== undefined || !existsSync(descriptorPath)) {
     child.kill("SIGKILL");
-    throw new Error(`fake TAKT broker ${label} did not become ready (exit ${String(exited)}, descriptor ${existsSync(descriptorPath) ? "present" : "missing"})`);
+    if (process.platform !== "win32" && existsSync(socketPath)) {
+      try { unlinkSync(socketPath); } catch { /* owned by this endpoint */ }
+    }
+    const socketFailure = readBrokerLog(logPath).find((event) => event.type === "server_error");
+    throw new Error(`fake TAKT broker ${label} did not become ready (exit ${String(exited)}, descriptor ${existsSync(descriptorPath) ? "present" : "missing"}${socketFailure ? `, socket ${String(socketFailure.code)} at ${Buffer.byteLength(socketPath)} bytes` : ""})`);
   }
 
   const events = () => readBrokerLog(logPath);
@@ -329,7 +386,7 @@ export async function startFakeBrokerEndpoint({
         try { unlinkSync(descriptorPath); } catch { /* owned by the temp root */ }
       }
       if (process.platform !== "win32" && existsSync(socketPath)) {
-        try { unlinkSync(socketPath); } catch { /* owned by the temp root */ }
+        try { unlinkSync(socketPath); } catch { /* owned by this endpoint */ }
       }
       // The endpoint log is the harness's own artifact; remove it so a repeated
       // run cannot count an earlier run's requests.

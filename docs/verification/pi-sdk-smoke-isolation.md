@@ -22,6 +22,8 @@ every host an environment where:
 - `APPDATA`/`XDG_CONFIG_HOME` and `HOME`/`XDG` point inside the root,
 - `TEMP`/`TMP`/`TMPDIR` point inside the root, so `os.tmpdir()` — and therefore
   the broker descriptor directory — is test-owned,
+- the fake broker's Unix socket uses a short path (see below), because macOS
+  limits a Unix socket path to 104 bytes,
 - `PI_CODING_AGENT_DIR` points inside the root, and inherited `PI_*` variables
   are dropped,
 - `TAKT_CONFIG_DIR` points inside the root and `TAKT_COMMAND` points at a
@@ -34,6 +36,22 @@ A managed fake PTY broker (`tests/fixtures/fake-takt-broker.mjs`) implements the
 descriptor protocol of `lib/takt-run-controller.ts` without owning a PTY. It
 records every connection and request, so the smoke can prove which endpoint a
 host reached.
+
+## Unix socket length
+
+macOS stores a Unix socket path in `sockaddr_un.sun_path`, which is 104 bytes
+including the NUL terminator (Linux: 108), and `server.listen()` fails with
+`EINVAL` beyond it. A hosted macOS runner `TMPDIR` is already ~55 bytes, so
+nesting the socket under the run's `tempRoot`, `.pm-<identity>` and a label
+produced 109-122 byte paths and the broker died before publishing its descriptor
+— `fake TAKT broker <label> did not become ready (exit 1, descriptor missing)`.
+`fakeBrokerSocketPath()` therefore keeps only the descriptor in
+`tempRoot/.pm-<identity>` and places the socket at the first candidate that fits
+`UNIX_SOCKET_PATH_LIMIT_BYTES`: the run's own `tempRoot`, then `/tmp`. The token
+in the name keeps both unique, the broker unlinks it on shutdown and
+`close()` unlinks it again.
+`tests/pi-sdk-smoke-isolation.test.mjs` covers the limit with a long temp root
+and a short base, so the regression reproduces on any platform.
 
 ## Assertions
 
@@ -57,6 +75,7 @@ happened" cannot pass as "isolation worked".
   TAKT CLI are fixtures.
 - No user-level file is read or written, and no real TAKT process is started.
   `TAKT_COMMAND` also guards paths the assertions cannot observe directly.
-- `tests/pi-sdk-smoke-isolation.test.mjs` covers the environment contract and
-  each assertion's negative case; `tests/pi-sdk-smoke-fake-broker.test.mjs`
-  checks the fixture against the real controller's attach/shutdown protocol.
+- `tests/pi-sdk-smoke-isolation.test.mjs` covers the environment contract,
+  the Unix socket length limit and each assertion's negative case;
+  `tests/pi-sdk-smoke-fake-broker.test.mjs` checks the fixture against the real
+  controller's attach/shutdown protocol.
