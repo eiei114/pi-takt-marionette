@@ -109,7 +109,19 @@ test("smoke environment redirects every user-level root and drops inherited Pi/p
     assert.equal(fallback.TAKT_CONFIG_DIR, isolation.bait.takt);
     assert.equal(fallback.PI_CODING_AGENT_DIR, isolation.bait.agent);
     assert.notEqual(fallback.TEMP, env.TEMP);
-    assert.notEqual(fallback.APPDATA ?? fallback.XDG_CONFIG_HOME, env.APPDATA ?? env.XDG_CONFIG_HOME);
+    assert.notEqual(fallback.PI_CODING_AGENT_DIR, env.PI_CODING_AGENT_DIR);
+    assert.notEqual(fallback.TAKT_CONFIG_DIR, env.TAKT_CONFIG_DIR);
+    // Select the registry variable by platform: on a non-Windows host with
+    // `APPDATA` set, both environments keep that inherited value unchanged, so
+    // comparing `APPDATA` there would compare identical values while the
+    // actually isolated `XDG_CONFIG_HOME` values differ.
+    if (process.platform === "win32") {
+      assert.notEqual(fallback.APPDATA, env.APPDATA);
+      assert.equal(env.APPDATA, isolation.paths.config, "the isolated host reads the test-owned registry root");
+    } else {
+      assert.notEqual(fallback.XDG_CONFIG_HOME, env.XDG_CONFIG_HOME);
+      assert.equal(env.XDG_CONFIG_HOME, isolation.paths.config, "the isolated host reads the test-owned registry root");
+    }
   } finally {
     isolation.cleanup();
   }
