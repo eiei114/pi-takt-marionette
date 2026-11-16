@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.8.14] - 2026-11-13
+
+### Fixed
+
+- Isolate the real-Pi SDK smoke from the operator's user-level state. The smoke
+  host loads this package, so it resolves the same roots a real Pi session uses:
+  the `pi-takt-bridge` project/profile registries under `APPDATA`
+  (`XDG_CONFIG_HOME` on Unix), the `os.tmpdir()/.pm-*` PTY broker descriptors,
+  and the TAKT global config and CLI. Redirecting only
+  `PI_CODING_AGENT_DIR`/`PI_OFFLINE` left those pointing at the live setup: the
+  host enumerated the real project registry, attached to a running TAKT broker,
+  and its `session_shutdown` sent that broker `shutdown`, which stopped the
+  operator's run.
+- The smoke now runs every host with `APPDATA`/`XDG_CONFIG_HOME`,
+  `TEMP`/`TMP`/`TMPDIR`, `TAKT_CONFIG_DIR` and `TAKT_COMMAND` inside a throwaway
+  root, backed by a managed fake TAKT CLI and fake PTY broker endpoints. New
+  assertions fail the run if an host attaches to the operator-shaped bait
+  endpoint or registry, if a child process loses the isolation, or if a mutating
+  TAKT subcommand (`run`/`exec`/`clear`/`resume`/`stop`) is ever invoked. A
+  negative-control host proves the bait fixture really detects a lost isolation.
+- Keep the fake broker's Unix socket path inside macOS's 104-byte
+  `sockaddr_un.sun_path` limit. The socket was nested under the throwaway root
+  plus `.pm-<identity>`, which passed the limit on hosted macOS runners (a
+  ~55-byte `TMPDIR`), so the endpoint died with `EINVAL` and `test
+  (macos-latest)` failed with `fake TAKT broker ... did not become ready (exit
+  1, descriptor missing)`. The descriptor stays under the run's root; the socket
+  now uses the first base that fits (the run's `tempRoot`, then `/tmp`), and
+  reports the measured length when none does.
+- Drop inherited `NODE_OPTIONS` from the smoke child environment. A
+  `--require`/`--import` preload would run inside every Pi host before the
+  package loads and could read the user-level state the harness redirects.
+- Require evidence from every isolated host. The isolated endpoint counters are
+  aggregate, so `smoke_config_isolated` now compares per-host deltas: all five
+  isolated hosts must each connect, take a snapshot and shut the endpoint down,
+  and a run where only one host ever attached fails.
+- Make the negative control exercise a *lost* override. The isolated environment
+  is now the operator-shaped bait layout plus the overrides, so dropping one
+  override falls back to bait (observable) instead of to a live registry or PTY
+  broker. The control host runs with that fallback alone and must attach to the
+  bait endpoint and shut it down.
+
 ## [0.8.13] - 2026-11-08
 
 ### Changed

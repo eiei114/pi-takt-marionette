@@ -37,6 +37,20 @@ test("CONTRIBUTING and PR template agree on local Pi testing", () => {
   assert.match(prTemplate, /pi -e \./);
 });
 
+test("Pi SDK smoke isolation guide documents the redirected roots", () => {
+  const guide = readFileSync(join(repoRoot, "docs", "verification", "pi-sdk-smoke-isolation.md"), "utf8");
+  const smoke = readFileSync(join(repoRoot, "scripts", "pi-sdk-smoke-isolation.mjs"), "utf8");
+
+  for (const variable of ["APPDATA", "XDG_CONFIG_HOME", "TMPDIR", "TAKT_CONFIG_DIR", "TAKT_COMMAND", "PI_CODING_AGENT_DIR"]) {
+    assert.match(guide, new RegExp(variable), `isolation guide should name ${variable}`);
+    assert.match(smoke, new RegExp(variable), `isolation helper should redirect ${variable}`);
+  }
+  assert.match(guide, /bait_endpoint_detectable/);
+  assert.match(guide, /smoke_config_isolated/);
+  assert.match(guide, /child_process_env_isolated/);
+  assert.match(guide, /no_mutating_takt_command/);
+});
+
 test("CONTRIBUTING release guidance matches the protected release policy", () => {
   const contributing = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
   const release = readFileSync(join(repoRoot, "docs", "release.md"), "utf8");

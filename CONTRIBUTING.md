@@ -9,6 +9,12 @@ npm install
 npm run ci
 ```
 
+`npm run smoke:pi` runs a real Pi RPC host against this package. It redirects
+`APPDATA`/`XDG_CONFIG_HOME`, `TEMP`/`TMP`/`TMPDIR`, `TAKT_CONFIG_DIR` and
+`TAKT_COMMAND` into a throwaway root, so it never reads your TAKT project
+registry or attaches to a running TAKT session. See
+[`docs/verification/pi-sdk-smoke-isolation.md`](docs/verification/pi-sdk-smoke-isolation.md).
+
 ## Local Pi testing
 
 ```bash
