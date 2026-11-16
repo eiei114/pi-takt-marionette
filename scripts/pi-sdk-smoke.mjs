@@ -10,10 +10,10 @@ import {
   VERIFICATION_CONTRACT,
 } from "./pi-sdk-smoke-contract.mjs";
 import {
-  bypassControlAssertion,
   createSmokeIsolation,
   fileFingerprint,
   isolationAssertions,
+  lostIsolationControlAssertion,
   probeChildEnvironment,
   seedProjectRegistry,
   startFakeBrokerEndpoint,
@@ -182,16 +182,28 @@ function runHostShell() {
 async function main() {
   let isolatedEndpoint;
   let baitEndpoint;
-  let controlEndpoint;
   let baitRegistryPath;
   let baitRegistryBefore;
+  /** Per-host deltas of the isolated endpoint, proving each host used it. */
+  const hostSteps = [];
+  let previousIsolated = { connections: 0, snapshot_requests: 0, shutdown_requests: 0, stop_requests: 0 };
+  const recordHostStep = (name) => {
+    const counts = isolatedEndpoint.counts();
+    hostSteps.push({
+      name,
+      connections: counts.connections - previousIsolated.connections,
+      snapshot_requests: counts.snapshot_requests - previousIsolated.snapshot_requests,
+      shutdown_requests: counts.shutdown_requests - previousIsolated.shutdown_requests,
+      stop_requests: counts.stop_requests - previousIsolated.stop_requests,
+    });
+    previousIsolated = counts;
+  };
   try {
     // A registered project with a fake PTY endpoint proves the extension really
     // resolves the isolated registry instead of the operator's live one.
     seedProjectRegistry(paths.config, [paths.project]);
     baitRegistryPath = seedProjectRegistry(isolation.bait.config, [isolation.bait.project]);
     baitRegistryBefore = fileFingerprint(baitRegistryPath);
-    seedProjectRegistry(isolation.control.config, [isolation.control.project]);
 
     isolatedEndpoint = await startFakeBrokerEndpoint({
       projectCwd: paths.project,
@@ -205,29 +217,32 @@ async function main() {
       running: true,
       label: "bait",
     });
-    controlEndpoint = await startFakeBrokerEndpoint({
-      projectCwd: isolation.control.project,
-      tempRoot: isolation.control.temp,
-      running: true,
-      label: "control",
-    });
 
-    // Run every host first, then read the fake endpoints: each host's
-    // session_shutdown is exactly what an un-isolated run delivers to a live
-    // PTY broker, so the counters must be observed after all hosts closed.
+    // Run every isolated host first: each host's session_shutdown is exactly
+    // what an un-isolated run delivers to a live PTY broker, so the counters are
+    // read as per-host deltas after each run and again after the last one.
     const extensionLoad = runHost(commandsInput, env);
+    recordHostStep("extension_load");
     const happyPath = runHost(featureInput, env);
+    recordHostStep("happy_path");
     const errorPath = runHost("not-json\n", env);
+    recordHostStep("error_path");
     const firstReloadHost = runHost(commandsInput, env);
+    recordHostStep("reload_cleanup:first_host");
     const secondReloadHost = runHost(`${commandsInput}${featureInput}`, env);
+    recordHostStep("reload_cleanup:second_host");
     const hostShell = runHostShell();
-    // Negative control: one host against the control layout, proving the
-    // bait/isolated assertions cannot pass merely because nothing is observable.
-    runHost(commandsInput, isolation.controlEnvironment());
 
-    const isolatedCounts = isolatedEndpoint.counts();
-    const baitCounts = baitEndpoint.counts();
-    const controlCounts = controlEndpoint.counts();
+    // Snapshot the bait before the negative control touches it: this is the
+    // evidence that the isolated hosts never reached the operator-shaped layout.
+    const baitCountsBeforeControl = baitEndpoint.counts();
+    const baitRegistryAfter = fileFingerprint(baitRegistryPath);
+
+    // Negative control: one host with only the operator-shaped fallback
+    // environment and no isolation override. A lost override must land on the
+    // bait layout (observable), never on a live registry or broker.
+    runHost(commandsInput, isolation.operatorEnvironment());
+    const baitCountsAfterControl = baitEndpoint.counts();
 
     const cases = [];
 
@@ -237,20 +252,25 @@ async function main() {
       extensionLoad,
       [
         ...behaviorAssertions("extension_load", extensionLoad),
-        // Run-level isolation evidence. Every host above used the isolated
-        // environment; the extra control host used a different fixture layout
-        // so a host that resolves elsewhere cannot pass unnoticed.
+        // Run-level isolation evidence. Every isolated host above used the
+        // isolated environment; one extra control host models the lost override.
         ...isolationAssertions({
           root: isolation.root,
-          isolatedCounts,
-          baitCounts,
-          baitRegistry: { before: baitRegistryBefore, after: fileFingerprint(baitRegistryPath) },
+          hostSteps,
+          baitCounts: baitCountsBeforeControl,
+          baitRegistry: { before: baitRegistryBefore, after: baitRegistryAfter },
           childProbe: probeChildEnvironment(env),
           taktInvocations: isolation.taktInvocations(),
         }),
-        ...bypassControlAssertion({ controlCounts }),
+        ...lostIsolationControlAssertion({ baitCounts: baitCountsAfterControl }),
       ],
-      { isolation_fixture: { isolated: isolatedCounts, bait: baitCounts, control: controlCounts } },
+      {
+        isolation_fixture: {
+          isolated_hosts: hostSteps,
+          bait_before_control: baitCountsBeforeControl,
+          bait_after_control: baitCountsAfterControl,
+        },
+      },
     ));
 
     cases.push(makeCase(
@@ -328,7 +348,6 @@ async function main() {
   } finally {
     await isolatedEndpoint?.close();
     await baitEndpoint?.close();
-    await controlEndpoint?.close();
     isolation.cleanup();
   }
 }

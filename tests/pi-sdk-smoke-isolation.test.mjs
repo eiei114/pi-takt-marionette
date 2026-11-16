@@ -5,14 +5,15 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  PRELOAD_ENV_PATTERN,
   brokerDescriptorPath,
   brokerRuntimeDirectory,
-  bypassControlAssertion,
   createSmokeIsolation,
   fakeBrokerSocketName,
   fakeBrokerSocketPath,
   fileFingerprint,
   isolationAssertions,
+  lostIsolationControlAssertion,
   probeChildEnvironment,
   seedProjectRegistry,
   smokeEnvironment,
@@ -43,6 +44,19 @@ const untouchedEndpointCounts = {
   sessionRunning: true,
 };
 
+/** One per-host delta as the smoke records it against the isolated endpoint. */
+function usedHostStep(name) {
+  return { name, connections: 1, snapshot_requests: 1, shutdown_requests: 1, stop_requests: 0 };
+}
+
+const everyIsolatedHostUsed = [
+  usedHostStep("extension_load"),
+  usedHostStep("happy_path"),
+  usedHostStep("error_path"),
+  usedHostStep("reload_cleanup:first_host"),
+  usedHostStep("reload_cleanup:second_host"),
+];
+
 function isolatedChildProbe(root) {
   return {
     exit_code: 0,
@@ -56,12 +70,13 @@ function isolatedChildProbe(root) {
   };
 }
 
-test("smoke environment redirects every user-level root and drops inherited Pi/secret variables", () => {
+test("smoke environment redirects every user-level root and drops inherited Pi/preload/secret variables", () => {
   const isolation = createSmokeIsolation({ rootPrefix: "pi-takt-smoke-env" });
   try {
     const env = smokeEnvironment({
       ...process.env,
       PI_CUSTOM_SECRET_DIR: "operator/pi",
+      NODE_OPTIONS: "--require ./operator-preload.cjs",
       GITHUB_TOKEN: "gho_should_not_leak",
       OPENAI_API_KEY: "sk-should-not-leak",
       AWS_PROFILE: "should-not-leak",
@@ -81,16 +96,37 @@ test("smoke environment redirects every user-level root and drops inherited Pi/s
       assert.equal(env.XDG_CONFIG_HOME, isolation.paths.config);
       assert.equal(env.HOME, isolation.paths.home);
     }
-    for (const dropped of ["PI_CUSTOM_SECRET_DIR", "GITHUB_TOKEN", "OPENAI_API_KEY", "AWS_PROFILE", "AZURE_TENANT_ID"]) {
+    for (const dropped of ["PI_CUSTOM_SECRET_DIR", "NODE_OPTIONS", "GITHUB_TOKEN", "OPENAI_API_KEY", "AWS_PROFILE", "AZURE_TENANT_ID"]) {
       assert.equal(env[dropped], undefined, `${dropped} must not reach the host`);
     }
+    assert.equal(PRELOAD_ENV_PATTERN.test("NODE_OPTIONS"), true);
+    assert.equal(PRELOAD_ENV_PATTERN.test("NODE_NO_WARNINGS"), false);
 
     // The negative-control layout must not share the isolated roots.
-    const bait = isolation.baitEnvironment();
-    assert.equal(process.platform === "win32" ? bait.APPDATA : bait.XDG_CONFIG_HOME, isolation.bait.config);
-    assert.equal(bait.TEMP, isolation.bait.temp);
-    assert.equal(bait.TAKT_CONFIG_DIR, isolation.bait.takt);
-    assert.notEqual(bait.TEMP, env.TEMP);
+    const fallback = isolation.operatorEnvironment();
+    assert.equal(process.platform === "win32" ? fallback.APPDATA : fallback.XDG_CONFIG_HOME, isolation.bait.config);
+    assert.equal(fallback.TEMP, isolation.bait.temp);
+    assert.equal(fallback.TAKT_CONFIG_DIR, isolation.bait.takt);
+    assert.equal(fallback.PI_CODING_AGENT_DIR, isolation.bait.agent);
+    assert.notEqual(fallback.TEMP, env.TEMP);
+    assert.notEqual(fallback.APPDATA ?? fallback.XDG_CONFIG_HOME, env.APPDATA ?? env.XDG_CONFIG_HOME);
+  } finally {
+    isolation.cleanup();
+  }
+});
+
+test("dropping one override falls back to the bait layout, not to the caller's real roots", () => {
+  const isolation = createSmokeIsolation({ rootPrefix: "pi-takt-smoke-override-gap" });
+  try {
+    // Model the regression the control assertion exists for: an override line is
+    // removed from `smokeEnvironment()`, so the host keeps the fallback value.
+    const withOverride = isolation.env;
+    const withoutTaktConfig = { ...withOverride };
+    delete withoutTaktConfig.TAKT_CONFIG_DIR;
+    const fallenBack = { ...isolation.operatorEnvironment(), ...withoutTaktConfig };
+    assert.equal(fallenBack.TAKT_CONFIG_DIR, isolation.bait.takt);
+    assert.ok(insideRoot(isolation.root, fallenBack.TAKT_CONFIG_DIR), "the fallback stays inside the test root");
+    assert.equal(withOverride.TAKT_CONFIG_DIR, isolation.paths.takt);
   } finally {
     isolation.cleanup();
   }
@@ -210,11 +246,11 @@ test("seed registry and broker descriptor live in the roots the bridge resolves"
   }
 });
 
-test("isolation assertions pass only when the isolated fixture was used and the bait was untouched", () => {
+test("isolation assertions require every isolated host, not one aggregate attach", () => {
   const root = "/isolated/root";
   const assertions = isolationAssertions({
     root,
-    isolatedCounts: cleanEndpointCounts,
+    hostSteps: everyIsolatedHostUsed,
     baitCounts: untouchedEndpointCounts,
     baitRegistry: { before: "a", after: "a" },
     childProbe: isolatedChildProbe(root),
@@ -226,13 +262,46 @@ test("isolation assertions pass only when the isolated fixture was used and the 
     "no_mutating_takt_command",
   ]);
   assert.equal(assertions.every((item) => item.passed), true);
+  assert.deepEqual(
+    assertions[0].observed.isolated_hosts.map((step) => step.host),
+    everyIsolatedHostUsed.map((step) => step.name),
+  );
+
+  // Four hosts not attaching must fail even though the aggregate endpoint count
+  // still shows a full run's worth of connections.
+  const oneHostMissing = isolationAssertions({
+    root,
+    hostSteps: [
+      usedHostStep("extension_load"),
+      { name: "happy_path", connections: 0, snapshot_requests: 0, shutdown_requests: 0, stop_requests: 0 },
+      usedHostStep("error_path"),
+      usedHostStep("reload_cleanup:first_host"),
+      usedHostStep("reload_cleanup:second_host"),
+    ],
+    baitCounts: untouchedEndpointCounts,
+    baitRegistry: { before: "a", after: "a" },
+    childProbe: isolatedChildProbe(root),
+    taktInvocations: [],
+  });
+  assert.equal(oneHostMissing[0].passed, false, "a host that never attached must fail the run");
+
+  // No host steps at all must also fail closed.
+  const noHosts = isolationAssertions({
+    root,
+    hostSteps: [],
+    baitCounts: untouchedEndpointCounts,
+    baitRegistry: { before: "a", after: "a" },
+    childProbe: isolatedChildProbe(root),
+    taktInvocations: [],
+  });
+  assert.equal(noHosts[0].passed, false);
 });
 
 test("isolation assertions fail closed when the isolated fixture was never used", () => {
   const root = tmpdir();
   const assertions = isolationAssertions({
     root,
-    isolatedCounts: untouchedEndpointCounts,
+    hostSteps: everyIsolatedHostUsed.map((step) => ({ ...step, connections: 0, snapshot_requests: 0, shutdown_requests: 0 })),
     baitCounts: untouchedEndpointCounts,
     baitRegistry: { before: "same", after: "same" },
     childProbe: {
@@ -263,7 +332,7 @@ test("isolation assertions fail closed when the bait layout or a mutating TAKT c
   };
   const leaked = isolationAssertions({
     root,
-    isolatedCounts: cleanEndpointCounts,
+    hostSteps: everyIsolatedHostUsed,
     baitCounts: touchedBait,
     baitRegistry: { before: "a", after: "b" },
     childProbe: isolatedChildProbe(root),
@@ -274,7 +343,7 @@ test("isolation assertions fail closed when the bait layout or a mutating TAKT c
 
   const registryDrift = isolationAssertions({
     root,
-    isolatedCounts: cleanEndpointCounts,
+    hostSteps: everyIsolatedHostUsed,
     baitCounts: untouchedEndpointCounts,
     baitRegistry: { before: "a", after: "b" },
     childProbe: isolatedChildProbe(root),
@@ -283,11 +352,11 @@ test("isolation assertions fail closed when the bait layout or a mutating TAKT c
   assert.equal(registryDrift[0].passed, false, "a changed bait registry must fail the run");
 });
 
-test("bypass control fails when no host reached the control endpoint", () => {
-  const notDetected = bypassControlAssertion({ controlCounts: { connections: 0, requests: [] } });
+test("lost-isolation control fails unless the fallback-only host reached the bait endpoint", () => {
+  const notDetected = lostIsolationControlAssertion({ baitCounts: { connections: 0, requests: [] } });
   assert.equal(notDetected[0].passed, false);
-  const detected = bypassControlAssertion({
-    controlCounts: {
+  const detected = lostIsolationControlAssertion({
+    baitCounts: {
       connections: 1,
       requests: ["snapshot", "shutdown"],
       snapshot_requests: 1,
@@ -296,4 +365,17 @@ test("bypass control fails when no host reached the control endpoint", () => {
     },
   });
   assert.equal(detected[0].passed, true);
+
+  // An attach that never shut the endpoint down is not proof of the lost-isolation
+  // path the negative control exists to demonstrate.
+  const attachOnly = lostIsolationControlAssertion({
+    baitCounts: {
+      connections: 1,
+      requests: ["snapshot"],
+      snapshot_requests: 1,
+      shutdown_requests: 0,
+      sessionRunning: true,
+    },
+  });
+  assert.equal(attachOnly[0].passed, false);
 });

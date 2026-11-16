@@ -34,6 +34,16 @@ import { fileURLToPath } from "node:url";
 
 const SECRET_ENV_PATTERN = /(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)|^AWS_|^AZURE_/i;
 
+/**
+ * Variables that make Node run code before the child's own module graph.
+ *
+ * `NODE_OPTIONS=--require <file>` / `--import` executes a preload inside every
+ * Pi host, and that file can read the user-level state this harness redirects
+ * (TAKT config, a live broker descriptor). Dropping the variable keeps the
+ * isolation contract of "the child environment is test-owned" true.
+ */
+export const PRELOAD_ENV_PATTERN = /^NODE_OPTIONS$/i;
+
 /** Subcommands that would mutate a real TAKT project; the fake CLI logs them. */
 export const MUTATING_TAKT_SUBCOMMANDS = ["run", "exec", "clear", "resume", "stop"];
 
@@ -140,14 +150,15 @@ export function brokerDescriptorPath(tempRoot, projectCwd) {
 /**
  * Build the child environment for the smoke host.
  *
- * Every user-level root is redirected into `roots`, inherited `PI_*` and
- * credential variables are dropped, and the TAKT CLI is replaced with a managed
- * fake so the host cannot resolve the operator's live configuration even when
- * the caller's own environment points at it.
+ * Every user-level root is redirected into `roots`, inherited `PI_*`,
+ * `NODE_OPTIONS` (a preload can read user-level state) and credential variables
+ * are dropped, and the TAKT CLI is replaced with a managed fake so the host
+ * cannot resolve the operator's live configuration even when the caller's own
+ * environment points at it.
  */
 export function smokeEnvironment(baseEnv, roots) {
   const env = Object.fromEntries(Object.entries(baseEnv).filter(([name]) =>
-    !/^PI_/i.test(name) && !SECRET_ENV_PATTERN.test(name)));
+    !/^PI_/i.test(name) && !PRELOAD_ENV_PATTERN.test(name) && !SECRET_ENV_PATTERN.test(name)));
   env.PI_CODING_AGENT_DIR = roots.agent;
   env.PI_OFFLINE = "1";
   env.PI_TAKT_SMOKE_LOG = roots.taktLog;
@@ -205,6 +216,7 @@ function layoutRoots(base, name) {
     temp: join(base.root, name, "temp"),
     takt: join(base.root, name, "takt"),
     home: join(base.root, name, "home"),
+    agent: join(base.root, name, "agent"),
     taktLog: join(base.root, `${name}-takt-invocations.jsonl`),
   };
 }
@@ -218,10 +230,14 @@ function layoutRoots(base, name) {
  *   entry that points at a managed fake PTY endpoint);
  * - `bait`: an operator-shaped layout (registry + PTY endpoint + project) that
  *   the isolated hosts must never reach, so a lost isolation is detected
- *   instead of silently reaching a live session;
- * - `control`: a second layout, reached on purpose by one negative-control host
- *   run, proving that a host resolving its registry and broker root elsewhere
- *   really is detectable.
+ *   instead of silently reaching a live session.
+ *
+ * The isolated environment layers its overrides on a baseline that already
+ * points at `bait`: if an override is ever dropped from `smokeEnvironment()`,
+ * the host falls back to `bait` instead of the operator's real registry and
+ * broker, and the bait evidence catches it. One negative-control host runs with
+ * that baseline alone (no overrides) to prove the bait endpoint really is
+ * reachable when the isolation is lost.
  */
 export function createSmokeIsolation({ rootPrefix = "pi-takt-sdk-smoke" } = {}) {
   const root = mkdtempSync(join(tmpdir(), `${rootPrefix}-`));
@@ -239,22 +255,25 @@ export function createSmokeIsolation({ rootPrefix = "pi-takt-sdk-smoke" } = {}) 
     taktLog: join(root, "takt-invocations.jsonl"),
   };
   const bait = layoutRoots(base, "bait");
-  const control = layoutRoots(base, "control");
-  for (const layout of [paths, bait, control]) {
-    for (const directory of [layout.project, layout.config, layout.temp, layout.takt, layout.home]) {
+  for (const layout of [paths, bait]) {
+    for (const directory of [layout.project, layout.config, layout.temp, layout.takt, layout.home, layout.agent]) {
       mkdirSync(directory, { recursive: true });
     }
   }
-  mkdirSync(paths.agent, { recursive: true });
+
+  // The environment a host resolves while the harness applies no override: the
+  // operator-shaped `bait` layout. The isolated env is that baseline with the
+  // overrides on top, so a removed override line falls back to `bait`, which the
+  // smoke can observe, instead of to the operator's real registry and live PTY
+  // broker, which it cannot.
+  const operatorEnv = smokeEnvironment(process.env, bait);
 
   return {
     root,
     paths,
     bait,
-    control,
-    env: smokeEnvironment(process.env, paths),
-    baitEnvironment: () => smokeEnvironment(process.env, bait),
-    controlEnvironment: () => smokeEnvironment(process.env, control),
+    operatorEnvironment: () => ({ ...operatorEnv }),
+    env: { ...operatorEnv, ...smokeEnvironment(process.env, paths) },
     taktInvocations(logPath) {
       const selected = logPath ?? paths.taktLog;
       if (!existsSync(selected)) return [];
@@ -440,21 +459,49 @@ function requestSummary(counts = {}) {
 /**
  * Assertions recorded in the smoke report.
  *
- * They fail closed: the isolated endpoint must have been reached (proving the
- * overrides are effective) while the operator-shaped bait endpoint and registry
- * must stay unchanged, and no mutating TAKT command may have run.
+/**
+ * Per-host activity, as read from the isolated endpoint between host runs.
+ *
+ * The endpoint counters are aggregate, so a single attach could account for the
+ * whole run. Recording the delta after each host proves that every isolated host
+ * (not just one) connected, took a snapshot and shut the endpoint down; four
+ * hosts silently not attaching now fails the run.
+ */
+function hostStepsSummary(steps = []) {
+  return steps.map((step) => ({
+    host: step.name ?? "unknown",
+    connections: step.connections ?? 0,
+    snapshot_requests: step.snapshot_requests ?? 0,
+    shutdown_requests: step.shutdown_requests ?? 0,
+    stop_requests: step.stop_requests ?? 0,
+  }));
+}
+
+function everyHostUsed(steps = []) {
+  return steps.length > 0 && steps.every((step) =>
+    (step.connections ?? 0) >= 1
+    && (step.snapshot_requests ?? 0) >= 1
+    && (step.shutdown_requests ?? 0) >= 1
+    && (step.stop_requests ?? 0) === 0);
+}
+
+/**
+ * Assertions recorded in the smoke report.
+ *
+ * They fail closed: every isolated host must have been observed reaching the
+ * isolated endpoint (proving the overrides are effective) while the
+ * operator-shaped bait endpoint and registry stayed unchanged during the
+ * isolated phase, and no mutating TAKT command may have run.
  */
 export function isolationAssertions({
   root,
-  isolatedCounts = {},
+  hostSteps = [],
   baitCounts = {},
   baitRegistry = { before: "missing", after: "missing" },
   childProbe = { exit_code: 1 },
   taktInvocations = [],
 }) {
-  const isolatedUsed = (isolatedCounts.connections ?? 0) >= 1
-    && (isolatedCounts.snapshot_requests ?? 0) >= 1
-    && (isolatedCounts.shutdown_requests ?? 0) >= 1;
+  const isolatedUsed = everyHostUsed(hostSteps);
   const baitUntouched = (baitCounts.connections ?? 0) === 0
     && (baitCounts.stop_requests ?? 0) === 0
     && (baitCounts.shutdown_requests ?? 0) === 0
@@ -474,10 +521,10 @@ export function isolationAssertions({
   return [
     {
       id: "smoke_config_isolated",
-      expected: "The smoke hosts resolve the project registry and PTY endpoint under the test-owned root, while the operator-shaped bait registry and fake endpoint stay unchanged",
+      expected: "Every isolated host resolves the project registry and PTY endpoint under the test-owned root, while the operator-shaped bait registry and fake endpoint stay unchanged",
       observed: {
-        isolated_endpoint: requestSummary(isolatedCounts),
-        bait_endpoint: requestSummary(baitCounts),
+        isolated_hosts: hostStepsSummary(hostSteps),
+        bait_endpoint_before_control: requestSummary(baitCounts),
         bait_registry_fingerprint: { ...baitRegistry },
       },
       passed: isolatedUsed && baitUntouched,
@@ -498,22 +545,24 @@ export function isolationAssertions({
 }
 
 /**
- * Negative control assertion.
+ * Lost-isolation control assertion.
  *
- * One host run with the *control* layout's environment must attach to that
- * layout's endpoint and send it shutdown. Without it the bait fixture could not
- * prove that a host resolving its registry/broker root elsewhere is detectable,
- * and the isolation assertions above would be vacuous.
+ * One negative-control host runs with the operator-shaped fallback environment
+ * and no isolation override, and must attach to the bait endpoint and shut it
+ * down. Without it the bait fixture could not prove that a host resolving its
+ * registry/broker root elsewhere is detectable, and the isolation assertions
+ * above would be vacuous. This host models the real failure (the override was
+ * never applied), not merely "an override pointing at a different layout".
  */
-export function bypassControlAssertion({ controlCounts = {} }) {
-  const detected = (controlCounts.connections ?? 0) >= 1
-    && (controlCounts.snapshot_requests ?? 0) >= 1
-    && (controlCounts.shutdown_requests ?? 0) >= 1
-    && controlCounts.sessionRunning === false;
+export function lostIsolationControlAssertion({ baitCounts = {} } = {}) {
+  const detected = (baitCounts.connections ?? 0) >= 1
+    && (baitCounts.snapshot_requests ?? 0) >= 1
+    && (baitCounts.shutdown_requests ?? 0) >= 1
+    && baitCounts.sessionRunning === false;
   return [{
     id: "bait_endpoint_detectable",
-    expected: "A host run against a non-isolated layout attaches to that layout's fake endpoint and sends it shutdown, proving a lost isolation is detected instead of silently ignored",
-    observed: requestSummary(controlCounts),
+    expected: "A host run with only the operator-shaped fallback environment (no isolation override) attaches to the bait endpoint and sends it shutdown, proving a lost isolation is detected instead of silently reaching a live session",
+    observed: requestSummary(baitCounts),
     passed: detected,
   }];
 }

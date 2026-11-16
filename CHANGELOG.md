@@ -28,6 +28,18 @@
   1, descriptor missing)`. The descriptor stays under the run's root; the socket
   now uses the first base that fits (the run's `tempRoot`, then `/tmp`), and
   reports the measured length when none does.
+- Drop inherited `NODE_OPTIONS` from the smoke child environment. A
+  `--require`/`--import` preload would run inside every Pi host before the
+  package loads and could read the user-level state the harness redirects.
+- Require evidence from every isolated host. The isolated endpoint counters are
+  aggregate, so `smoke_config_isolated` now compares per-host deltas: all five
+  isolated hosts must each connect, take a snapshot and shut the endpoint down,
+  and a run where only one host ever attached fails.
+- Make the negative control exercise a *lost* override. The isolated environment
+  is now the operator-shaped bait layout plus the overrides, so dropping one
+  override falls back to bait (observable) instead of to a live registry or PTY
+  broker. The control host runs with that fallback alone and must attach to the
+  bait endpoint and shut it down.
 
 ## [0.8.13] - 2026-11-08
 

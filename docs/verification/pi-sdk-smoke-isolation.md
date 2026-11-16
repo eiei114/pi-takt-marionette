@@ -30,7 +30,14 @@ every host an environment where:
   managed fake TAKT CLI (records each invocation, answers only the read-only
   `list`/`root` commands),
 - credential-shaped variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET`,
-  `AWS_*`, `AZURE_*`, …) are dropped.
+  `AWS_*`, `AZURE_*`, …) are dropped,
+- `NODE_OPTIONS` is dropped, because `--require`/`--import` would run a preload
+  inside each Pi host before the package loads, and that preload can read the
+  user-level roots the harness redirects.
+
+The isolated environment layers these overrides on a baseline that already
+points at the bait layout (below), so dropping one override falls back to bait
+rather than to the operator's real registry and broker.
 
 A managed fake PTY broker (`tests/fixtures/fake-takt-broker.mjs`) implements the
 descriptor protocol of `lib/takt-run-controller.ts` without owning a PTY. It
@@ -59,14 +66,22 @@ The `extension_load` case carries the run-level isolation evidence:
 
 | ID | Fails when |
 | --- | --- |
-| `smoke_config_isolated` | no host reached the isolated endpoint, or the operator-shaped bait endpoint/registry was touched |
+| `smoke_config_isolated` | any isolated host did not connect, snapshot and shut down the isolated endpoint, or the operator-shaped bait endpoint/registry was touched during the isolated phase |
 | `child_process_env_isolated` | a child inheriting the smoke environment resolves temp, registry, Pi agent, TAKT config or TAKT command outside the test root |
 | `no_mutating_takt_command` | the fake TAKT CLI saw `run`, `exec`, `clear`, `resume` or `stop` |
-| `bait_endpoint_detectable` | the negative-control host did not attach to the control endpoint and shut it down — without this, the bait fixture would be vacuous |
+| `bait_endpoint_detectable` | the negative-control host — run with only the operator-shaped fallback environment and no isolation override — did not attach to the bait endpoint and shut it down. Without this, the bait fixture would be vacuous |
 
-The Bait endpoint and registry are never reachable from the isolated hosts. The
-control endpoint is deliberately reached by one extra host so that "nothing
-happened" cannot pass as "isolation worked".
+The isolated endpoint counters are aggregate, so `smoke_config_isolated` reads
+per-host deltas: five isolated hosts must each show one connection, one snapshot
+and one shutdown. A run where four hosts stop attaching fails even though the
+aggregate count still looks complete.
+
+The bait endpoint and registry are never reachable from the isolated hosts. The
+operator-shaped fallback environment (bait) is derived first and the isolation
+overrides are layered on top, so a removed override degrades to bait — which the
+smoke observes — instead of to a live registry or PTY broker, which it cannot.
+The negative control deliberately reaches bait with that fallback alone, so
+"nothing happened" cannot pass as "isolation worked".
 
 ## Boundaries
 
@@ -75,7 +90,8 @@ happened" cannot pass as "isolation worked".
   TAKT CLI are fixtures.
 - No user-level file is read or written, and no real TAKT process is started.
   `TAKT_COMMAND` also guards paths the assertions cannot observe directly.
-- `tests/pi-sdk-smoke-isolation.test.mjs` covers the environment contract,
-  the Unix socket length limit and each assertion's negative case;
-  `tests/pi-sdk-smoke-fake-broker.test.mjs` checks the fixture against the real
-  controller's attach/shutdown protocol.
+- `tests/pi-sdk-smoke-isolation.test.mjs` covers the environment contract, the
+  dropped `NODE_OPTIONS` preload, the override-fallback to bait, the Unix socket
+  length limit, the per-host activity requirement and each assertion's negative
+  case; `tests/pi-sdk-smoke-fake-broker.test.mjs` checks the fixture against the
+  real controller's attach/shutdown protocol.
