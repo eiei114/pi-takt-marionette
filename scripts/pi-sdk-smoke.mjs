@@ -31,8 +31,8 @@ const sdkVersions = Object.fromEntries(SDK_NAMES.map((name) => [
 ]));
 
 for (const name of SDK_NAMES) {
-  if (manifest.devDependencies?.[name] !== "1.5.0" || sdkVersions[name] !== "1.5.0") {
-    throw new Error(`Pi SDK smoke requires exact 1.5.0 dev/test pins for ${name}; manifest=${manifest.devDependencies?.[name]}, installed=${sdkVersions[name]}`);
+  if (manifest.devDependencies?.[name] !== "1.5.2" || sdkVersions[name] !== "1.5.2") {
+    throw new Error(`Pi SDK smoke requires exact 1.5.2 dev/test pins for ${name}; manifest=${manifest.devDependencies?.[name]}, installed=${sdkVersions[name]}`);
   }
 }
 
