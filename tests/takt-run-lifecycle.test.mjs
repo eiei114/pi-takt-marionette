@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,6 +28,37 @@ function createBlockingCommand(directory) {
   writeFileSync(command, "#!/bin/sh\nsleep 20\n", "utf8");
   chmodSync(command, 0o755);
   return command;
+}
+
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessPid(path, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) {
+      const pid = Number(readFileSync(path, "utf8").trim());
+      if (Number.isSafeInteger(pid) && pid > 1) return pid;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for a process id in ${path}`);
+}
+
+async function waitForProcessExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !isProcessRunning(pid);
 }
 
 test("natural PTY exit reconciles to completed and remains disposable", async () => {
@@ -194,6 +225,69 @@ test("stop terminates a broker-owned PTY and allows a fresh start after dispose"
   } finally {
     if (controller.isRunning || controller.hasSession) {
       await controller.dispose();
+    }
+  }
+});
+
+const windowsProcessTreeTest = process.platform === "win32" ? test : test.skip;
+
+windowsProcessTreeTest("Windows stop terminates the PTY process and its spawned descendant", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "pi-takt-bridge-process-tree-"));
+  const parentScript = join(cwd, "parent.mjs");
+  const childScript = join(cwd, "child.mjs");
+  const parentPidFile = join(cwd, "parent.pid");
+  const childPidFile = join(cwd, "child.pid");
+  const controller = new TaktRunController({ cwd, command: process.execPath, cols: 40, rows: 4 });
+  let childPid;
+
+  try {
+    writeFileSync(childScript, [
+      'import { writeFileSync } from "node:fs";',
+      'process.on("SIGINT", () => {});',
+      'writeFileSync(process.argv[2], String(process.pid));',
+      "setInterval(() => {}, 1_000);",
+      "",
+    ].join("\n"), "utf8");
+    writeFileSync(parentScript, [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      'process.on("SIGINT", () => {});',
+      'writeFileSync(process.argv[3], String(process.pid));',
+      'const child = spawn(process.execPath, [process.argv[2], process.argv[4]], { stdio: "ignore", windowsHide: true });',
+      'child.on("error", (error) => { console.error(error); process.exit(1); });',
+      "setInterval(() => {}, 1_000);",
+      "",
+    ].join("\n"), "utf8");
+
+    await controller.start([parentScript, childScript, parentPidFile, childPidFile]);
+    const parentPid = controller.pid;
+    assert.equal(typeof parentPid, "number", "the started PTY parent must expose its PID");
+
+    const recordedParentPid = await waitForProcessPid(parentPidFile, 5_000);
+    childPid = await waitForProcessPid(childPidFile, 5_000);
+    assert.equal(recordedParentPid, parentPid, "the parent script must match the controller's captured PID");
+    assert.notEqual(childPid, parentPid, "the descendant must be a separate process");
+    assert.equal(isProcessRunning(parentPid), true, "the parent must be alive before stop");
+    assert.equal(isProcessRunning(childPid), true, "the descendant must be alive before stop");
+
+    await controller.stop();
+
+    assert.equal(await waitForProcessExit(parentPid, 5_000), true, `parent process ${parentPid} should exit after stop`);
+    assert.equal(await waitForProcessExit(childPid, 5_000), true, `descendant process ${childPid} should exit after stop`);
+    assert.equal(controller.status, "completed");
+    assert.equal(controller.isRunning, false);
+  } finally {
+    try {
+      if (childPid && isProcessRunning(childPid)) {
+        process.kill(childPid, "SIGKILL");
+        assert.equal(await waitForProcessExit(childPid, 5_000), true, `cleanup should stop descendant process ${childPid}`);
+      }
+    } finally {
+      try {
+        await controller.shutdown();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
     }
   }
 });
