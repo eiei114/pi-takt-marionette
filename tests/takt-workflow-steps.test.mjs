@@ -12,12 +12,28 @@ const {
 } = await import("../lib/takt-workflow-steps.ts");
 const {
   assertWorkflowCatalogReady,
+  resolveTaktInstallRoot,
   resolveWorkflowCatalog,
 } = await import("../lib/takt-workflow-catalog.ts");
 
 function makeProject() {
   return mkdtempSync(join(tmpdir(), "pi-takt-bridge-steps-"));
 }
+
+test("TAKT install-root lookup retries a miss and caches a hit", async (t) => {
+  const root = makeProject();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const command = join(root, "bin", "takt");
+
+  const miss = resolveTaktInstallRoot(command);
+  assert.equal(resolveTaktInstallRoot(command), miss, "share the in-flight lookup");
+  assert.equal(await miss, undefined);
+
+  mkdirSync(join(root, "builtins"));
+  const hit = resolveTaktInstallRoot(command);
+  assert.equal(await hit, root);
+  assert.equal(resolveTaktInstallRoot(command), hit, "keep the successful lookup cached");
+});
 
 const SIMPLE_WORKFLOW = [
   "name: simple",
