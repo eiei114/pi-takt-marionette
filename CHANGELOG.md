@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.16] - 2026-11-24
+
+### Changed
+
+- Pin the Pi SDK dev/test packages to 1.6.0 and verify compatibility in the actual Pi host.
+
 ## [0.8.15] - 2026-11-21
 
 ### Changed
