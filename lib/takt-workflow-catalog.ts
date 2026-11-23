@@ -88,7 +88,13 @@ export function resolveTaktInstallRoot(command = "takt"): Promise<string | undef
   if (cached) {
     return cached;
   }
-  const next = detectTaktInstallRoot(command).catch(() => undefined);
+  const next = detectTaktInstallRoot(command).catch(() => undefined).then((root) => {
+    // A cache reset may have installed a newer lookup for this command.
+    if (root === undefined && cachedTaktRootPromises.get(command) === next) {
+      cachedTaktRootPromises.delete(command);
+    }
+    return root;
+  });
   cachedTaktRootPromises.set(command, next);
   return next;
 }
