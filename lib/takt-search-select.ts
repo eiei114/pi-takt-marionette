@@ -13,7 +13,7 @@ const DEFAULT_VISIBLE_LIMIT = 14;
 /**
  * Type-to-filter list controller shared by bridge dialogs. Filtering is
  * subsequence fuzzy matching over fully qualified item text; Enter confirms
- * the highlighted entry and Escape cancels.
+ * only when an entry is highlighted, and Escape cancels.
  */
 export class SearchableListController {
   private query = "";
@@ -45,7 +45,7 @@ export class SearchableListController {
       return "cancelled";
     }
     if (matchesKey(data, "enter")) {
-      return "confirmed";
+      return this.getHighlightedValue() === undefined ? "ignored" : "confirmed";
     }
     if (matchesKey(data, "up")) {
       this.highlight = Math.max(0, this.highlight - 1);

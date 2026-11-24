@@ -28,7 +28,7 @@ test("searchable list filters as the user types and resets highlight", () => {
   assert.equal(controller.visible().length, 4);
 });
 
-test("searchable list confirms highlighted entry and cancels on escape", () => {
+test("searchable list confirms highlighted entry", () => {
   const controller = new SearchableListController(ITEMS);
 
   // Type a filter that leaves exactly one match, then confirm it.
@@ -38,6 +38,27 @@ test("searchable list confirms highlighted entry and cancels on escape", () => {
   assert.deepEqual(controller.visible().map((entry) => entry.text), ["openai-codex/gpt-5-codex"]);
   assert.equal(controller.getHighlightedValue(), "openai-codex/gpt-5-codex");
   assert.equal(controller.handleInput("\r"), "confirmed");
+});
+
+test("searchable list ignores Enter with no match and confirms after backspacing", () => {
+  const controller = new SearchableListController(ITEMS);
+
+  for (const char of "autoz") {
+    controller.handleInput(char);
+  }
+  assert.deepEqual(controller.visible(), []);
+  assert.equal(controller.handleInput("\r"), "ignored");
+  assert.equal(controller.getQuery(), "autoz");
+  assert.equal(controller.handleInput("\u007f"), "changed");
+  assert.equal(controller.getHighlightedValue(), "cursor/auto");
+  assert.equal(controller.handleInput("\r"), "confirmed");
+});
+
+test("searchable list cancels on Escape even with no match", () => {
+  const controller = new SearchableListController(ITEMS);
+  controller.handleInput("z");
+  assert.deepEqual(controller.visible(), []);
+  assert.equal(controller.handleInput("\x1b"), "cancelled");
 });
 
 test("searchable list moves highlight with arrow keys only within matches", () => {
