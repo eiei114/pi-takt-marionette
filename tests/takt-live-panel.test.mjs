@@ -719,6 +719,28 @@ test("elideMiddle is CJK-aware: wide characters count double", async () => {
   assert.ok(elided.includes("…"), elided);
 });
 
+test("elideMiddle keeps joined emoji whole at both cuts", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  const emoji = "👩‍💻";
+  const name = `A${emoji}middle${emoji}Z`;
+  for (const [width, expected] of [[5, `A…${emoji}Z`], [7, `A${emoji}…${emoji}Z`]]) {
+    const elided = elideMiddle(name, width);
+    assert.equal(elided, expected);
+    assert.ok(visibleWidth(elided) <= width, elided);
+  }
+});
+
+test("elideMiddle never leaves a combining mark without its base at a cut", async () => {
+  const { elideMiddle } = await import("../lib/takt-live-panel.ts");
+  const accented = "e\u0301";
+  const name = `A${accented}middle${accented}YZ`;
+  for (const [width, expected] of [[5, `A${accented}…YZ`], [6, `A${accented}…${accented}YZ`]]) {
+    const elided = elideMiddle(name, width);
+    assert.equal(elided, expected);
+    assert.ok(visibleWidth(elided) <= width, elided);
+  }
+});
+
 test("elideMiddle degrades gracefully on tiny budgets", async () => {
   const { elideMiddle } = await import("../lib/takt-live-panel.ts");
   assert.equal(elideMiddle("anything", 1), "…");
