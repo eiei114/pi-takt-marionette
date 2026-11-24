@@ -22,6 +22,7 @@ import {
 } from "./takt-types.ts";
 
 const ELLIPSIS = "…";
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 const DEFAULT_COLUMNS = 120;
 const DEFAULT_ROWS = 30;
@@ -485,9 +486,8 @@ export function allocateNameWidths(
 }
 
 /**
- * Width-aware middle elision: keep the head and tail of an over-long name
- * with `…` between them. CJK and wide emoji count double, so the result is
- * guaranteed to stay within `maxWidth` display columns.
+ * Width-aware middle elision: keep whole graphemes from the head and tail
+ * of an over-long name with `…` between them.
  */
 export function elideMiddle(value: string, maxWidth: number): string {
   const normalized = normalizeInline(value);
@@ -497,38 +497,33 @@ export function elideMiddle(value: string, maxWidth: number): string {
   if (visibleWidth(normalized) <= maxWidth) {
     return normalized;
   }
-  const chars = [...normalized];
+  const graphemes = Array.from(graphemeSegmenter.segment(normalized), ({ segment }) => segment);
   const body = maxWidth - 1;
   const half = Math.floor(body / 2);
   let head = "";
   let headW = 0;
-  for (const ch of chars) {
-    const w = charWidth(ch);
+  let headEnd = 0;
+  for (; headEnd < graphemes.length; headEnd += 1) {
+    const grapheme = graphemes[headEnd];
+    const w = visibleWidth(grapheme);
     if (headW + w > half) {
       break;
     }
-    head += ch;
+    head += grapheme;
     headW += w;
   }
   let tail = "";
   let tailW = 0;
-  for (let i = chars.length - 1; i >= 0; i -= 1) {
-    const w = charWidth(chars[i]);
+  for (let i = graphemes.length - 1; i >= headEnd; i -= 1) {
+    const grapheme = graphemes[i];
+    const w = visibleWidth(grapheme);
     if (tailW + w > body - headW) {
       break;
     }
-    tail = chars[i] + tail;
+    tail = grapheme + tail;
     tailW += w;
   }
-  if (head.length === 0 && tail.length === 0 && chars.length > 0) {
-    // Single code point wider than the budget: keep just the ellipsis.
-    return ELLIPSIS;
-  }
   return `${head}${ELLIPSIS}${tail}`;
-}
-
-function charWidth(ch: string): number {
-  return visibleWidth(ch);
 }
 
 function normalizeInline(value: string): string {
